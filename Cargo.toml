@@ -30,14 +30,14 @@ hound = "3.5"
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
 
-# HTTP client for API backend
-reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "multipart", "rustls-tls"] }
+# HTTP client for API backend (pure rustls, no OpenSSL)
+reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "multipart", "rustls-tls", "rustls-tls-webpki-roots"] }
 
 # Local transcription
 whisper-rs = "0.12"
 
-# Model downloading (optional, for future use)
-hf-hub = { version = "0.3", features = ["tokio"] }
+# Model downloading (use tokio backend with reqwest, not ureq)
+hf-hub = { version = "0.3", default-features = false, features = ["online", "tokio"] }
 
 # Logging
 tracing = "0.1"
