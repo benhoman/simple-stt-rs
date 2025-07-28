@@ -40,8 +40,9 @@ jobs:
               draft: false,
               prerelease: tag.includes('-'),
             });
-            core.setOutput("release_id", release.data.id);
-            core.setOutput("upload_url", release.data.upload_url);
+            const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_id=${release.data.id}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `upload_url=${release.data.upload_url}\n`);
 
   build:
     needs: create-release
