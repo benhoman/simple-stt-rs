@@ -63,53 +63,53 @@ jobs:
       - name: Build
         run: cargo build --release
 
-  # Cross-compilation checks disabled temporarily due to ALSA/pkg-config cross-compilation issues
-  # Pre-built binaries are provided via GitHub Actions release workflow
-  # check-cross-compilation:
-  #   name: Check Linux Cross Compilation
-  #   runs-on: ubuntu-latest
-  #   strategy:
-  #     matrix:
-  #       target:
-  #         - x86_64-unknown-linux-musl
-  #         - aarch64-unknown-linux-gnu
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #
-  #     - name: Install Rust
-  #       uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         targets: ${{ matrix.target }}
-  #         components: rustfmt, clippy
-  #
-  #     - name: Install cross-compilation tools
-  #       run: |
-  #         sudo apt-get update
-  #         # Install ALSA development libraries for audio support
-  #         sudo apt-get install -y libasound2-dev
-  #         if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-  #           sudo apt-get install -y gcc-aarch64-linux-gnu
-  #           echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> $GITHUB_ENV
-  #         elif [[ "${{ matrix.target }}" == *"musl"* ]]; then
-  #           sudo apt-get install -y musl-tools
-  #         fi
-  #
-  #     - name: Cache cargo registry
-  #       uses: actions/cache@v3
-  #       with:
-  #         path: ~/.cargo/registry
-  #         key: ${{ runner.os }}-${{ matrix.target }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-  #         restore-keys: |
-  #           ${{ runner.os }}-${{ matrix.target }}-cargo-registry-
-  #
-  #     - name: Cache cargo build
-  #       uses: actions/cache@v3
-  #       with:
-  #         path: target
-  #         key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-  #         restore-keys: |
-  #           ${{ runner.os }}-${{ matrix.target }}-cargo-build-target-
-  #
-  #     - name: Check build
-  #       run: cargo check --target ${{ matrix.target }}
+  check-cross-compilation:
+    name: Check Linux Cross Compilation
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - aarch64-unknown-linux-gnu
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get update
+          # Enable arm64 architecture for cross-compilation packages
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          # Install all required system dependencies including cross-compilation versions
+          sudo apt-get install -y libasound2-dev libclang-dev cmake gcc-aarch64-linux-gnu
+          # Install aarch64-specific ALSA libraries for cross-compilation
+          sudo apt-get install -y libasound2-dev:arm64
+          # Set up cross-compilation environment
+          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> $GITHUB_ENV
+          echo 'PKG_CONFIG_ALLOW_CROSS=1' >> $GITHUB_ENV
+          echo 'PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig' >> $GITHUB_ENV
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-registry-
+
+      - name: Cache cargo build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-build-target-
+
+      - name: Check build
+        run: cargo check --target ${{ matrix.target }}
