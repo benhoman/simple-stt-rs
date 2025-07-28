@@ -35,7 +35,7 @@ impl SttBackend {
             SttBackend::Local(backend) => backend.is_configured(),
         }
     }
-    
+
     /// Check if the backend is currently being prepared
     pub fn is_preparing(&self) -> bool {
         match self {
@@ -43,7 +43,7 @@ impl SttBackend {
             SttBackend::Local(backend) => backend.is_preparing(),
         }
     }
-    
+
     /// Get preparation error if any
     pub fn preparation_failed(&self) -> Option<&str> {
         match self {
@@ -51,7 +51,7 @@ impl SttBackend {
             SttBackend::Local(backend) => backend.preparation_failed(),
         }
     }
-    
+
     /// Get the model name being used
     pub fn model(&self) -> &str {
         match self {
@@ -59,7 +59,7 @@ impl SttBackend {
             SttBackend::Local(backend) => backend.model(),
         }
     }
-    
+
     /// Transcribe an audio file
     pub async fn transcribe<P: AsRef<Path>>(&self, audio_path: P) -> Result<Option<String>> {
         match self {
@@ -163,4 +163,4 @@ mod tests {
         let processor = SttProcessor::new(&config);
         assert!(processor.is_err());
     }
-} 
+}

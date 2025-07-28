@@ -30,7 +30,7 @@ pub struct AudioRecorder {
 impl AudioRecorder {
     pub fn new(config: &Config) -> Result<Self> {
         let host = cpal::default_host();
-        
+
         let device = host
             .default_input_device()
             .context("No input device available")?;
@@ -55,17 +55,15 @@ impl AudioRecorder {
                     && config_range.min_sample_rate() <= SampleRate(config.audio.sample_rate)
                     && config_range.max_sample_rate() >= SampleRate(config.audio.sample_rate)
             })
-            .or_else(|| {
-                device
-                    .supported_input_configs()
-                    .ok()?
-                    .next()
-            })
+            .or_else(|| device.supported_input_configs().ok()?.next())
             .context("No supported audio configuration found")?;
 
-        let sample_rate = config.audio.sample_rate.min(supported_config.max_sample_rate().0)
+        let sample_rate = config
+            .audio
+            .sample_rate
+            .min(supported_config.max_sample_rate().0)
             .max(supported_config.min_sample_rate().0);
-        
+
         let channels = supported_config.channels().min(config.audio.channels);
 
         info!("Audio config: {} Hz, {} channels", sample_rate, channels);
@@ -91,10 +89,9 @@ impl AudioRecorder {
         info!("🎤 Starting recording... speak now, will stop after silence");
 
         // Create temporary file for recording
-        let temp_file = NamedTempFile::new()
-            .context("Failed to create temporary file")?;
+        let temp_file = NamedTempFile::new().context("Failed to create temporary file")?;
         let temp_path = temp_file.path().with_extension("wav");
-        
+
         // Create WAV writer
         let spec = WavSpec {
             channels: self.channels,
@@ -104,8 +101,7 @@ impl AudioRecorder {
         };
 
         let writer = Arc::new(Mutex::new(
-            WavWriter::create(&temp_path, spec)
-                .context("Failed to create WAV writer")?
+            WavWriter::create(&temp_path, spec).context("Failed to create WAV writer")?,
         ));
 
         // Shared state
@@ -128,65 +124,72 @@ impl AudioRecorder {
         let error_tx2 = error_tx1.clone();
 
         // Build the input stream
-        let stream = self.device.build_input_stream(
-            &config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let now = Instant::now();
-                
-                // Check max recording time
-                if now.duration_since(start_time) > max_recording_time {
-                    warn!("⏰ Maximum recording time reached, stopping...");
-                    recording_clone.store(false, Ordering::Relaxed);
-                    return;
-                }
+        let stream = self
+            .device
+            .build_input_stream(
+                &config,
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let now = Instant::now();
 
-                // Calculate RMS volume
-                let rms = calculate_rms(data);
-                
-                // Check for silence
-                let mut silence_start_guard = silence_start_clone.lock().unwrap();
-                if rms < silence_threshold {
-                    if silence_start_guard.is_none() {
-                        *silence_start_guard = Some(now);
-                        debug!("Silence detected, started timer");
-                    } else if let Some(silence_start_time) = *silence_start_guard {
-                        if now.duration_since(silence_start_time) > silence_duration {
-                            info!("🔇 Silence detected for required duration, stopping recording");
-                            recording_clone.store(false, Ordering::Relaxed);
-                            return;
+                    // Check max recording time
+                    if now.duration_since(start_time) > max_recording_time {
+                        warn!("⏰ Maximum recording time reached, stopping...");
+                        recording_clone.store(false, Ordering::Relaxed);
+                        return;
+                    }
+
+                    // Calculate RMS volume
+                    let rms = calculate_rms(data);
+
+                    // Check for silence
+                    let mut silence_start_guard = silence_start_clone.lock().unwrap();
+                    if rms < silence_threshold {
+                        if silence_start_guard.is_none() {
+                            *silence_start_guard = Some(now);
+                            debug!("Silence detected, started timer");
+                        } else if let Some(silence_start_time) = *silence_start_guard {
+                            if now.duration_since(silence_start_time) > silence_duration {
+                                info!(
+                                    "🔇 Silence detected for required duration, stopping recording"
+                                );
+                                recording_clone.store(false, Ordering::Relaxed);
+                                return;
+                            }
                         }
-                    }
-                } else {
-                    if silence_start_guard.is_some() {
-                        debug!("Speech resumed, resetting silence timer");
-                    }
-                    *silence_start_guard = None;
-                }
-
-                // Convert f32 samples to i16 and write to file
-                let samples_i16: Vec<i16> = data.iter()
-                    .map(|&sample| (sample * i16::MAX as f32) as i16)
-                    .collect();
-
-                if let Ok(mut writer_guard) = writer_clone.lock() {
-                    for &sample in &samples_i16 {
-                        if let Err(e) = writer_guard.write_sample(sample) {
-                            let _ = error_tx1.send(format!("Failed to write audio sample: {}", e));
-                            recording_clone.store(false, Ordering::Relaxed);
-                            return;
+                    } else {
+                        if silence_start_guard.is_some() {
+                            debug!("Speech resumed, resetting silence timer");
                         }
+                        *silence_start_guard = None;
                     }
-                } else {
-                    let _ = error_tx1.send("Failed to acquire writer lock".to_string());
-                    recording_clone.store(false, Ordering::Relaxed);
-                }
-            },
-            move |err| {
-                warn!("Audio stream error: {}", err);
-                let _ = error_tx2.send(format!("Audio stream error: {}", err));
-            },
-            None,
-        ).context("Failed to build input stream")?;
+
+                    // Convert f32 samples to i16 and write to file
+                    let samples_i16: Vec<i16> = data
+                        .iter()
+                        .map(|&sample| (sample * i16::MAX as f32) as i16)
+                        .collect();
+
+                    if let Ok(mut writer_guard) = writer_clone.lock() {
+                        for &sample in &samples_i16 {
+                            if let Err(e) = writer_guard.write_sample(sample) {
+                                let _ =
+                                    error_tx1.send(format!("Failed to write audio sample: {}", e));
+                                recording_clone.store(false, Ordering::Relaxed);
+                                return;
+                            }
+                        }
+                    } else {
+                        let _ = error_tx1.send("Failed to acquire writer lock".to_string());
+                        recording_clone.store(false, Ordering::Relaxed);
+                    }
+                },
+                move |err| {
+                    warn!("Audio stream error: {}", err);
+                    let _ = error_tx2.send(format!("Audio stream error: {}", err));
+                },
+                None,
+            )
+            .context("Failed to build input stream")?;
 
         // Start the stream
         stream.play().context("Failed to start audio stream")?;
@@ -194,7 +197,7 @@ impl AudioRecorder {
         // Wait for recording to complete
         while recording.load(Ordering::Relaxed) {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            
+
             // Check for stream errors
             if let Ok(error) = error_rx.try_recv() {
                 return Err(anyhow::anyhow!("Audio recording error: {}", error));
@@ -203,7 +206,7 @@ impl AudioRecorder {
 
         // Stop the stream and finalize the file
         drop(stream);
-        
+
         // Finalize the WAV file by dropping the writer
         drop(writer);
 
@@ -212,7 +215,8 @@ impl AudioRecorder {
             .context("Failed to get file metadata")?
             .len();
 
-        if file_size < 1000 { // Less than 1KB probably means no audio
+        if file_size < 1000 {
+            // Less than 1KB probably means no audio
             warn!("❌ No meaningful audio recorded");
             std::fs::remove_file(&temp_path).ok();
             return Ok(None);
@@ -220,16 +224,25 @@ impl AudioRecorder {
 
         // Keep reference to temp file
         self.temp_file = Some(temp_path.clone());
-        
-        info!("✅ Recording completed: {:.2} KB", file_size as f64 / 1024.0);
+
+        info!(
+            "✅ Recording completed: {:.2} KB",
+            file_size as f64 / 1024.0
+        );
         Ok(Some(temp_path))
     }
 
     /// Tune the silence threshold by analyzing ambient noise and speech
     pub async fn tune_silence_threshold(&mut self, duration_seconds: u64) -> Result<Option<f32>> {
-        info!("🎯 Starting silence threshold tuning for {} seconds", duration_seconds);
+        info!(
+            "🎯 Starting silence threshold tuning for {} seconds",
+            duration_seconds
+        );
         println!("🎯 Starting silence threshold tuning...");
-        println!("This will record for {} seconds. Follow the prompts below:", duration_seconds);
+        println!(
+            "This will record for {} seconds. Follow the prompts below:",
+            duration_seconds
+        );
         println!();
 
         let config = StreamConfig {
@@ -253,28 +266,31 @@ impl AudioRecorder {
         println!("🔇 First, stay SILENT for {} seconds...", silence_time);
 
         // Build the input stream for tuning
-        let stream = self.device.build_input_stream(
-            &config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let now = Instant::now();
-                let elapsed = now.duration_since(start_time);
-                
-                if elapsed.as_secs() >= duration_seconds {
-                    recording_clone.store(false, Ordering::Relaxed);
-                    return;
-                }
+        let stream = self
+            .device
+            .build_input_stream(
+                &config,
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let now = Instant::now();
+                    let elapsed = now.duration_since(start_time);
 
-                let rms = calculate_rms(data);
-                
-                if let Ok(mut volumes_guard) = volumes_clone.lock() {
-                    volumes_guard.push((rms, elapsed));
-                }
-            },
-            move |err| {
-                warn!("Audio stream error during tuning: {}", err);
-            },
-            None,
-        ).context("Failed to build input stream for tuning")?;
+                    if elapsed.as_secs() >= duration_seconds {
+                        recording_clone.store(false, Ordering::Relaxed);
+                        return;
+                    }
+
+                    let rms = calculate_rms(data);
+
+                    if let Ok(mut volumes_guard) = volumes_clone.lock() {
+                        volumes_guard.push((rms, elapsed));
+                    }
+                },
+                move |err| {
+                    warn!("Audio stream error during tuning: {}", err);
+                },
+                None,
+            )
+            .context("Failed to build input stream for tuning")?;
 
         stream.play().context("Failed to start tuning stream")?;
 
@@ -284,16 +300,19 @@ impl AudioRecorder {
 
         while recording.load(Ordering::Relaxed) {
             tokio::time::sleep(Duration::from_millis(250)).await;
-            
+
             let elapsed = Instant::now().duration_since(start_time);
-            
+
             // Provide feedback every second
             if Instant::now().duration_since(last_feedback) >= Duration::from_secs(1) {
                 if elapsed.as_secs() < silence_time {
                     let remaining = silence_time - elapsed.as_secs();
                     println!("🔇 Stay silent... {}s remaining", remaining);
                 } else if !speech_prompted {
-                    println!("🗣️  Now SPEAK CLEARLY for {} seconds... (say anything, read text, etc.)", speech_time);
+                    println!(
+                        "🗣️  Now SPEAK CLEARLY for {} seconds... (say anything, read text, etc.)",
+                        speech_time
+                    );
                     speech_prompted = true;
                 } else {
                     let remaining = duration_seconds - elapsed.as_secs();
@@ -309,7 +328,7 @@ impl AudioRecorder {
 
         // Analyze the collected data
         let volumes_data = volumes.lock().unwrap().clone();
-        
+
         if volumes_data.len() < 10 {
             warn!("❌ Not enough data collected for tuning");
             return Ok(None);
@@ -336,7 +355,7 @@ impl AudioRecorder {
         let avg_silence = silence_volumes.iter().sum::<f32>() / silence_volumes.len() as f32;
         let max_silence = silence_volumes.iter().fold(0.0f32, |a, &b| a.max(b));
         let p95_silence = percentile(&silence_volumes, 0.95);
-        
+
         let avg_speech = speech_volumes.iter().sum::<f32>() / speech_volumes.len() as f32;
         let min_speech = speech_volumes.iter().fold(f32::INFINITY, |a, &b| a.min(b));
         let p10_speech = percentile(&speech_volumes, 0.10);
@@ -352,26 +371,38 @@ impl AudioRecorder {
 
         // Improved algorithm: Calculate multiple thresholds
         let gap = p10_speech - max_silence;
-        
+
         if gap > 0.5 {
             // Good separation between silence and speech
-            let conservative = max_silence + gap * 0.2;  // Close to silence
-            let balanced = max_silence + gap * 0.5;      // Middle ground  
-            let aggressive = max_silence + gap * 0.8;    // Close to speech
-            
+            let conservative = max_silence + gap * 0.2; // Close to silence
+            let balanced = max_silence + gap * 0.5; // Middle ground
+            let aggressive = max_silence + gap * 0.8; // Close to speech
+
             println!();
             println!("🎯 Threshold Suggestions (try in order):");
-            println!("   🟢 Balanced: {:.1}     (recommended - stops on natural pauses)", balanced);
-            println!("   🔵 Conservative: {:.1}  (stops quickly, may cut off speech)", conservative);
-            println!("   🟡 Aggressive: {:.1}   (allows long pauses, slower to stop)", aggressive);
+            println!(
+                "   🟢 Balanced: {:.1}     (recommended - stops on natural pauses)",
+                balanced
+            );
+            println!(
+                "   🔵 Conservative: {:.1}  (stops quickly, may cut off speech)",
+                conservative
+            );
+            println!(
+                "   🟡 Aggressive: {:.1}   (allows long pauses, slower to stop)",
+                aggressive
+            );
             println!();
             println!("💡 Start with the balanced setting. If it cuts you off, try aggressive.");
             println!("   If it doesn't stop, try conservative.");
-            
+
             // Use balanced as the auto-applied setting
             let optimal_threshold = balanced;
-            println!("✅ Auto-applying balanced threshold: {:.1}", optimal_threshold);
-            
+            println!(
+                "✅ Auto-applying balanced threshold: {:.1}",
+                optimal_threshold
+            );
+
             Ok(Some(optimal_threshold))
         } else {
             // Poor separation - provide wider range
@@ -379,19 +410,28 @@ impl AudioRecorder {
             let conservative = base * 0.7;
             let balanced = base;
             let aggressive = base * 1.4;
-            
+
             println!();
             println!("⚠️  Overlapping silence/speech levels detected!");
             println!("🎯 Threshold Suggestions (experiment needed):");
             println!("   🟢 Balanced: {:.1}     (starting point)", balanced);
-            println!("   🔵 Conservative: {:.1}  (try if balanced doesn't stop)", conservative); 
-            println!("   🟡 Aggressive: {:.1}   (try if balanced cuts you off)", aggressive);
+            println!(
+                "   🔵 Conservative: {:.1}  (try if balanced doesn't stop)",
+                conservative
+            );
+            println!(
+                "   🟡 Aggressive: {:.1}   (try if balanced cuts you off)",
+                aggressive
+            );
             println!();
             println!("💡 Your microphone setup may need adjustment or try --tune again in a quieter environment.");
-            
+
             let optimal_threshold = balanced;
-            println!("✅ Auto-applying balanced threshold: {:.1}", optimal_threshold);
-            
+            println!(
+                "✅ Auto-applying balanced threshold: {:.1}",
+                optimal_threshold
+            );
+
             Ok(Some(optimal_threshold))
         }
     }
@@ -422,7 +462,7 @@ fn calculate_rms(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }
-    
+
     let sum_squares: f32 = samples.iter().map(|&sample| sample * sample).sum();
     (sum_squares / samples.len() as f32).sqrt() * 1000.0 // Scale for easier threshold values
 }
@@ -431,7 +471,7 @@ fn calculate_rms(samples: &[f32]) -> f32 {
 fn percentile(data: &[f32], p: f64) -> f32 {
     let mut sorted = data.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    
+
     let index = (p * (sorted.len() - 1) as f64) as usize;
     sorted[index.min(sorted.len() - 1)]
-} 
+}

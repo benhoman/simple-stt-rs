@@ -35,12 +35,13 @@ impl UiManager {
     /// Set the current status message
     pub fn set_status(&mut self, message: &str, _color: &str) {
         self.current_status = message.to_string();
-        
+
         if self.config.enabled {
-            let elapsed = self.start_time
+            let elapsed = self
+                .start_time
                 .map(|start| start.elapsed().as_secs_f32())
                 .unwrap_or(0.0);
-            
+
             println!("[{:6.1}s] {}", elapsed, message);
         }
     }
@@ -108,7 +109,10 @@ impl UiManager {
     /// Clean up UI resources
     pub fn cleanup(&mut self) {
         if self.config.enabled && self.config.auto_hide_delay > 0.0 {
-            debug!("UI will auto-hide after {} seconds", self.config.auto_hide_delay);
+            debug!(
+                "UI will auto-hide after {} seconds",
+                self.config.auto_hide_delay
+            );
         }
     }
 
@@ -158,11 +162,11 @@ mod tests {
     fn test_status_updates() {
         let config = Config::default();
         let mut ui = UiManager::new(&config);
-        
+
         ui.set_status("Test", "#ffffff");
         assert_eq!(ui.current_status(), "Test");
-        
+
         ui.start_recording(Some("test-profile"));
         assert!(ui.current_status().contains("test-profile"));
     }
-} 
+}

@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use clap::{Arg, Command};
-use simple_stt_rs::{audio::AudioRecorder, clipboard::ClipboardManager, config::Config, stt::SttProcessor, ui::UiManager};
+use simple_stt_rs::{
+    audio::AudioRecorder, clipboard::ClipboardManager, config::Config, stt::SttProcessor,
+    ui::UiManager,
+};
 use std::process;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
@@ -106,14 +109,14 @@ async fn run() -> Result<()> {
 
 fn setup_logging(verbose: bool) -> Result<()> {
     let log_level = if verbose { "debug" } else { "info" };
-    
+
     // Create log directory
     let log_dir = dirs::home_dir()
         .context("Could not determine home directory")?
         .join(".local")
         .join("share")
         .join("simple-stt");
-    
+
     std::fs::create_dir_all(&log_dir).context("Failed to create log directory")?;
 
     // File appender
@@ -148,8 +151,8 @@ async fn tune_threshold(config: &Config) -> Result<()> {
     info!("Starting silence threshold tuning");
     println!("🎯 Tuning silence threshold for optimal detection...");
 
-    let mut audio_recorder = AudioRecorder::new(config)
-        .context("Failed to initialize audio recorder")?;
+    let mut audio_recorder =
+        AudioRecorder::new(config).context("Failed to initialize audio recorder")?;
 
     let optimal_threshold = audio_recorder
         .tune_silence_threshold(12)
@@ -158,7 +161,8 @@ async fn tune_threshold(config: &Config) -> Result<()> {
 
     if let Some(threshold) = optimal_threshold {
         let mut updated_config = config.clone();
-        updated_config.update_silence_threshold(threshold)
+        updated_config
+            .update_silence_threshold(threshold)
             .context("Failed to save updated configuration")?;
 
         println!("✅ Updated config with new threshold: {:.1}", threshold);
@@ -181,8 +185,8 @@ async fn tune_threshold_interactive(config: &Config) -> Result<()> {
     println!();
 
     // First, do the automatic tuning to get baseline suggestions
-    let mut audio_recorder = AudioRecorder::new(config)
-        .context("Failed to initialize audio recorder")?;
+    let mut audio_recorder =
+        AudioRecorder::new(config).context("Failed to initialize audio recorder")?;
 
     println!("🔄 Step 1: Automatic calibration...");
     let _optimal_threshold = audio_recorder
@@ -223,9 +227,12 @@ async fn tune_threshold_interactive(config: &Config) -> Result<()> {
         test_config.audio.silence_threshold = threshold;
         let mut test_recorder = AudioRecorder::new(&test_config)?;
 
-        println!("🎤 Testing threshold {:.1} - speak for ~5 seconds, then pause...", threshold);
+        println!(
+            "🎤 Testing threshold {:.1} - speak for ~5 seconds, then pause...",
+            threshold
+        );
         println!("⏱️  Recording will start in 3 seconds...");
-        
+
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
         // Quick test recording
@@ -238,14 +245,20 @@ async fn tune_threshold_interactive(config: &Config) -> Result<()> {
 
                 let mut feedback = String::new();
                 io::stdin().read_line(&mut feedback)?;
-                
+
                 if feedback.trim().to_lowercase().starts_with('y') {
                     successful_threshold = Some(threshold);
                     println!("🎉 Great! Threshold {:.1} marked as working!", threshold);
                 } else {
                     println!("👍 Noted. Try a different value:");
-                    println!("   - If it cut you off → try a LOWER number (like {:.1})", threshold * 0.8);
-                    println!("   - If it didn't stop → try a HIGHER number (like {:.1})", threshold * 1.2);
+                    println!(
+                        "   - If it cut you off → try a LOWER number (like {:.1})",
+                        threshold * 0.8
+                    );
+                    println!(
+                        "   - If it didn't stop → try a HIGHER number (like {:.1})",
+                        threshold * 1.2
+                    );
                 }
 
                 // Clean up test file
@@ -268,7 +281,8 @@ async fn tune_threshold_interactive(config: &Config) -> Result<()> {
     // Apply the successful threshold if found
     if let Some(threshold) = successful_threshold {
         let mut updated_config = config.clone();
-        updated_config.update_silence_threshold(threshold)
+        updated_config
+            .update_silence_threshold(threshold)
             .context("Failed to save updated configuration")?;
 
         println!("🎯 Applied successful threshold: {:.1}", threshold);
@@ -284,13 +298,13 @@ async fn tune_threshold_interactive(config: &Config) -> Result<()> {
 
 fn list_profiles(config: &Config) -> Result<()> {
     println!("📝 Available LLM profiles:");
-    
+
     for (profile_id, profile_data) in &config.llm.profiles {
         println!("  • {}: {}", profile_id, profile_data.name);
     }
-    
+
     println!("\n🎯 Default profile: {}", config.llm.default_profile);
-    
+
     Ok(())
 }
 
@@ -369,7 +383,7 @@ async fn run_stt(config: &Config, profile: Option<&str>, use_stdout: bool) -> Re
             println!("💡 STT backend not configured properly");
         }
         ui_manager.set_status("✅ Audio recorded (transcription unavailable)", "#ffaa00");
-        
+
         // Clean up and exit
         std::fs::remove_file(&audio_file).ok();
         return Ok(());
@@ -397,7 +411,7 @@ async fn run_stt(config: &Config, profile: Option<&str>, use_stdout: bool) -> Re
     // Refine text with LLM (optional)
     let final_text = if llm_configured {
         ui_manager.set_refining(profile);
-        
+
         match llm_refiner.refine_text(&text, profile).await {
             Ok(Some(refined)) => {
                 info!("Text refined successfully");
@@ -457,7 +471,7 @@ async fn run_stt(config: &Config, profile: Option<&str>, use_stdout: bool) -> Re
 fn check_configuration(config: &Config) -> Result<()> {
     println!("🔧 Configuration Status");
     println!("=======================");
-    
+
     // Check STT configuration
     let stt_configured = match config.whisper.backend.as_str() {
         "api" => config.whisper.api_key.is_some(),
@@ -467,18 +481,19 @@ fn check_configuration(config: &Config) -> Result<()> {
                 Ok(model_path) => model_path.exists() || config.whisper.download_models,
                 Err(_) => false,
             }
-        },
+        }
         _ => false,
     };
-    
+
     if stt_configured {
         println!("✅ Speech-to-Text: Configured");
-        println!("   Backend: {} ({})", 
+        println!(
+            "   Backend: {} ({})",
             config.whisper.backend,
             match config.whisper.backend.as_str() {
                 "api" => "OpenAI Whisper API",
                 "local" => "Local Whisper models",
-                _ => "Unknown"
+                _ => "Unknown",
             }
         );
         println!("   Model: {}", config.whisper.model);
@@ -521,12 +536,12 @@ fn check_configuration(config: &Config) -> Result<()> {
                     println!("   📁 Expected location: {:?}", model_path);
                     println!("   🌐 Download from: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{}.bin", config.whisper.model);
                 }
-            },
+            }
             _ => println!("   ❌ Unknown backend: {}", config.whisper.backend),
         }
     }
-    
-    // Check LLM configuration  
+
+    // Check LLM configuration
     let llm_configured = config.llm.api_key.is_some();
     if llm_configured {
         println!("✅ LLM Text Refinement: Configured");
@@ -539,16 +554,22 @@ fn check_configuration(config: &Config) -> Result<()> {
         match config.llm.provider.as_str() {
             "openai" => println!("   💡 Set OPENAI_API_KEY environment variable to enable"),
             "anthropic" => println!("   💡 Set ANTHROPIC_API_KEY environment variable to enable"),
-            _ => println!("   💡 Configure API key for {} provider", config.llm.provider),
+            _ => println!(
+                "   💡 Configure API key for {} provider",
+                config.llm.provider
+            ),
         }
     }
-    
+
     // Check audio configuration
     println!("✅ Audio Recording: Always available");
     println!("   Sample Rate: {} Hz", config.audio.sample_rate);
-    println!("   Silence Threshold: {:.1}", config.audio.silence_threshold);
+    println!(
+        "   Silence Threshold: {:.1}",
+        config.audio.silence_threshold
+    );
     println!("   Silence Duration: {:.1}s", config.audio.silence_duration);
-    
+
     // Check clipboard configuration
     println!("✅ Clipboard: Always available");
     if config.clipboard.auto_paste {
@@ -584,14 +605,14 @@ fn check_configuration(config: &Config) -> Result<()> {
 
     println!("\n📁 Config file: {:?}", Config::config_path()?);
     println!("🌊 This application is designed for Wayland compositors (like Hyprland)");
-    
+
     Ok(())
 }
 
 /// Get the path where the model should be located (duplicate from local.rs for checking)
 fn get_model_path(config: &simple_stt_rs::config::WhisperConfig) -> Result<std::path::PathBuf> {
     use std::path::PathBuf;
-    
+
     if let Some(ref path) = config.model_path {
         let expanded = shellexpand::tilde(path);
         Ok(PathBuf::from(expanded.as_ref()))
@@ -600,10 +621,10 @@ fn get_model_path(config: &simple_stt_rs::config::WhisperConfig) -> Result<std::
         let cache_dir = dirs::cache_dir()
             .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
             .unwrap_or_else(|| std::env::temp_dir());
-            
+
         let model_dir = cache_dir.join("simple-stt").join("models");
         let model_file = format!("ggml-{}.bin", config.model);
-        
+
         Ok(model_dir.join(model_file))
     }
 }

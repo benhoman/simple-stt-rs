@@ -38,7 +38,7 @@ pub struct WhisperConfig {
     pub model: String,
     pub language: Option<String>,
     pub timeout: u64,
-    
+
     // Local-specific options
     pub model_path: Option<String>,
     pub download_models: bool,
@@ -79,7 +79,7 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         let mut profiles = HashMap::new();
-        
+
         profiles.insert(
             "general".to_string(),
             LlmProfile {
@@ -87,7 +87,7 @@ impl Default for LlmConfig {
                 prompt: "Please clean up and format this transcribed text, fixing any grammar issues and making it more readable. It is extremely important to maintain the original meaning and not add any additional information:".to_string(),
             },
         );
-        
+
         profiles.insert(
             "todo".to_string(),
             LlmProfile {
@@ -95,7 +95,7 @@ impl Default for LlmConfig {
                 prompt: "Convert this speech into a clear, actionable todo item or task description. Make it specific, concise, and action-oriented. Use bullet points (markdown format) if multiple tasks are mentioned:".to_string(),
             },
         );
-        
+
         profiles.insert(
             "email".to_string(),
             LlmProfile {
@@ -103,7 +103,7 @@ impl Default for LlmConfig {
                 prompt: "Format this transcribed text as a professional email. Fix grammar, structure sentences properly, and ensure appropriate tone:".to_string(),
             },
         );
-        
+
         profiles.insert(
             "slack".to_string(),
             LlmProfile {
@@ -182,9 +182,12 @@ impl Config {
     /// Load configuration from XDG config directory
     pub fn load() -> Result<Self> {
         let config_path = Self::config_path()?;
-        
+
         if !config_path.exists() {
-            info!("Configuration file not found, creating default: {:?}", config_path);
+            info!(
+                "Configuration file not found, creating default: {:?}",
+                config_path
+            );
             let config = Self::default();
             config.save()?;
             return Ok(config);
@@ -193,8 +196,8 @@ impl Config {
         let content = std::fs::read_to_string(&config_path)
             .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
 
-        let mut config: Self = serde_yaml::from_str(&content)
-            .with_context(|| "Failed to parse YAML configuration")?;
+        let mut config: Self =
+            serde_yaml::from_str(&content).with_context(|| "Failed to parse YAML configuration")?;
 
         // Override with environment variables
         config.apply_env_overrides();
@@ -206,14 +209,14 @@ impl Config {
     /// Save configuration to XDG config directory
     pub fn save(&self) -> Result<()> {
         let config_path = Self::config_path()?;
-        
+
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create config directory: {:?}", parent))?;
         }
 
-        let content = serde_yaml::to_string(self)
-            .with_context(|| "Failed to serialize configuration")?;
+        let content =
+            serde_yaml::to_string(self).with_context(|| "Failed to serialize configuration")?;
 
         std::fs::write(&config_path, content)
             .with_context(|| format!("Failed to write config file: {:?}", config_path))?;
@@ -224,9 +227,8 @@ impl Config {
 
     /// Get the configuration file path using XDG config directory
     pub fn config_path() -> Result<PathBuf> {
-        let config_dir = config_dir()
-            .context("Could not determine config directory")?;
-        
+        let config_dir = config_dir().context("Could not determine config directory")?;
+
         Ok(config_dir.join(APP_NAME).join(CONFIG_FILE))
     }
 
@@ -267,4 +269,4 @@ impl Config {
         self.audio.silence_threshold = threshold;
         self.save()
     }
-} 
+}

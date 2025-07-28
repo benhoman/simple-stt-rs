@@ -33,7 +33,7 @@ impl LlmRefiner {
 
         let profile_name = profile.unwrap_or(&self.config.default_profile);
         let profile_data = self.config.profiles.get(profile_name);
-        
+
         let profile_data = match profile_data {
             Some(profile) => profile,
             None => {
@@ -49,7 +49,10 @@ impl LlmRefiner {
             "openai" => self.refine_with_openai(text, profile_data).await,
             "anthropic" => self.refine_with_anthropic(text, profile_data).await,
             provider => {
-                warn!("Unsupported LLM provider '{}', using original text", provider);
+                warn!(
+                    "Unsupported LLM provider '{}', using original text",
+                    provider
+                );
                 Ok(Some(text.to_string()))
             }
         }
@@ -57,7 +60,9 @@ impl LlmRefiner {
 
     /// Refine text using OpenAI API
     async fn refine_with_openai(&self, text: &str, profile: &LlmProfile) -> Result<Option<String>> {
-        let api_key = self.config.api_key
+        let api_key = self
+            .config
+            .api_key
             .as_ref()
             .context("OpenAI API key not configured")?;
 
@@ -78,10 +83,14 @@ impl LlmRefiner {
         });
 
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", api_key))?);
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", api_key))?,
+        );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        let response = self.client
+        let response = self
+            .client
             .post("https://api.openai.com/v1/chat/completions")
             .headers(headers)
             .json(&payload)
@@ -99,7 +108,9 @@ impl LlmRefiner {
             ));
         }
 
-        let result: Value = response.json().await
+        let result: Value = response
+            .json()
+            .await
             .context("Failed to parse OpenAI response")?;
 
         let refined_text = result
@@ -121,8 +132,14 @@ impl LlmRefiner {
     }
 
     /// Refine text using Anthropic Claude API
-    async fn refine_with_anthropic(&self, text: &str, profile: &LlmProfile) -> Result<Option<String>> {
-        let api_key = self.config.api_key
+    async fn refine_with_anthropic(
+        &self,
+        text: &str,
+        profile: &LlmProfile,
+    ) -> Result<Option<String>> {
+        let api_key = self
+            .config
+            .api_key
             .as_ref()
             .context("Anthropic API key not configured")?;
 
@@ -142,7 +159,8 @@ impl LlmRefiner {
         headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        let response = self.client
+        let response = self
+            .client
             .post("https://api.anthropic.com/v1/messages")
             .headers(headers)
             .json(&payload)
@@ -160,7 +178,9 @@ impl LlmRefiner {
             ));
         }
 
-        let result: Value = response.json().await
+        let result: Value = response
+            .json()
+            .await
             .context("Failed to parse Anthropic response")?;
 
         let refined_text = result
@@ -242,10 +262,10 @@ mod tests {
         let config = Config::default();
         let refiner = LlmRefiner::new(&config).unwrap();
         let profiles = refiner.list_profiles();
-        
+
         assert!(profiles.contains_key("general"));
         assert!(profiles.contains_key("todo"));
         assert!(profiles.contains_key("email"));
         assert!(profiles.contains_key("slack"));
     }
-} 
+}

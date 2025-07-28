@@ -39,8 +39,11 @@ impl ClipboardManager {
     /// Copy using native Wayland clipboard
     fn copy_wayland_native(&self, text: &str) -> Result<()> {
         let opts = Options::new();
-        opts.copy(Source::Bytes(text.as_bytes().into()), MimeType::Specific("text/plain;charset=utf-8".to_string()))
-            .context("Failed to copy to Wayland clipboard")?;
+        opts.copy(
+            Source::Bytes(text.as_bytes().into()),
+            MimeType::Specific("text/plain;charset=utf-8".to_string()),
+        )
+        .context("Failed to copy to Wayland clipboard")?;
         Ok(())
     }
 
@@ -74,7 +77,7 @@ impl ClipboardManager {
 
         if self.config.auto_paste {
             info!("🖱️ Auto-pasting text to active window");
-            
+
             // Wait for configured delay
             if self.config.paste_delay > 0.0 {
                 tokio::time::sleep(Duration::from_secs_f64(self.config.paste_delay)).await;
@@ -159,8 +162,7 @@ impl ClipboardManager {
             .context("Failed to execute wl-paste")?;
 
         if output.status.success() {
-            String::from_utf8(output.stdout)
-                .context("Clipboard contents are not valid UTF-8")
+            String::from_utf8(output.stdout).context("Clipboard contents are not valid UTF-8")
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             Err(anyhow::anyhow!("wl-paste failed: {}", stderr))
@@ -231,4 +233,4 @@ mod tests {
         clipboard.set_auto_paste(true);
         assert!(clipboard.is_auto_paste_enabled());
     }
-} 
+}

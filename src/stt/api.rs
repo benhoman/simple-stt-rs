@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
-use std::path::Path;
-use std::time::Duration;
-use tracing::info;
 use reqwest::multipart;
 use serde_json::Value;
+use std::path::Path;
+use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+use tracing::info;
 
 use crate::config::{Config, WhisperConfig};
 
@@ -37,7 +37,7 @@ impl ApiSttBackend {
 
     pub async fn transcribe<P: AsRef<Path>>(&self, audio_path: P) -> Result<Option<String>> {
         let audio_path = audio_path.as_ref();
-        
+
         if !audio_path.exists() {
             return Err(anyhow::anyhow!("Audio file not found: {:?}", audio_path));
         }
@@ -46,14 +46,19 @@ impl ApiSttBackend {
             .as_ref()
             .context("OpenAI API key not configured. Set OPENAI_API_KEY environment variable or configure in config file")?;
 
-        info!("🔄 Transcribing audio file with OpenAI API: {:?}", audio_path);
+        info!(
+            "🔄 Transcribing audio file with OpenAI API: {:?}",
+            audio_path
+        );
 
         // Read audio file
-        let mut file = File::open(audio_path).await
+        let mut file = File::open(audio_path)
+            .await
             .context("Failed to open audio file")?;
-        
+
         let mut audio_data = Vec::new();
-        file.read_to_end(&mut audio_data).await
+        file.read_to_end(&mut audio_data)
+            .await
             .context("Failed to read audio file")?;
 
         // Prepare multipart form
@@ -72,7 +77,8 @@ impl ApiSttBackend {
         }
 
         // Make API request
-        let response = self.client
+        let response = self
+            .client
             .post("https://api.openai.com/v1/audio/transcriptions")
             .header("Authorization", format!("Bearer {}", api_key))
             .multipart(form)
@@ -90,7 +96,9 @@ impl ApiSttBackend {
             ));
         }
 
-        let result: Value = response.json().await
+        let result: Value = response
+            .json()
+            .await
             .context("Failed to parse JSON response")?;
 
         let text = result
@@ -107,4 +115,4 @@ impl ApiSttBackend {
             Ok(Some(text))
         }
     }
-} 
+}

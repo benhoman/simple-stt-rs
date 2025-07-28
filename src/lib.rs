@@ -4,4 +4,4 @@ pub mod config;
 pub mod stt;
 pub mod ui;
 
-pub use config::Config; 
+pub use config::Config;
