@@ -37,7 +37,7 @@ simple-stt           # Copy to clipboard
 simple-stt --stdout  # Output to stdout
 ```
 
-### ☁️ **Cloud Mode** (OpenAI API)  
+### ☁️ **Cloud Mode** (OpenAI API)
 Record → Cloud Transcribe → Clipboard/Stdout
 ```bash
 # Switch to cloud in config.yaml:
@@ -108,7 +108,7 @@ sudo apt install ydotool      # Universal input tool
 ```bash
 sudo dnf install pipewire wl-clipboard
 # For auto-paste functionality (optional):
-sudo dnf install wtype        # Wayland native typing  
+sudo dnf install wtype        # Wayland native typing
 # OR:
 sudo dnf install ydotool      # Universal input tool
 ```
@@ -140,7 +140,7 @@ cargo build --release
 ./target/release/simple-stt
 ```
 **That's it!** The app will:
-- Create a default configuration 
+- Create a default configuration
 - Show you where the Whisper model will be downloaded
 - Work immediately once you speak
 
@@ -287,7 +287,7 @@ simple-stt --profile slack
 ## CLI Options
 
 - `simple-stt` - Record and transcribe (copy to clipboard)
-- `simple-stt --stdout` - Record and transcribe (output to stdout)  
+- `simple-stt --stdout` - Record and transcribe (output to stdout)
 - `simple-stt --check-config` - Check configuration status and available features
 - `simple-stt --tune` - Calibrate silence detection threshold
 - `simple-stt --list-profiles` - Show available LLM profiles
@@ -309,13 +309,13 @@ You can add custom profiles by editing the configuration file.
 
 ### Default Flow (Local Transcription)
 1. **Start**: Run `simple-stt` command
-2. **Record**: Speak into your microphone  
+2. **Record**: Speak into your microphone
 3. **Auto-Stop**: Recording stops automatically after detecting silence
 4. **Transcribe**: Audio is processed locally with Whisper
 5. **Output**: Result is copied to clipboard
 
 ### With LLM Refinement
-1. **Start**: Run `simple-stt --profile email` 
+1. **Start**: Run `simple-stt --profile email`
 2. **Record**: Speak into your microphone
 3. **Auto-Stop**: Recording stops automatically after detecting silence
 4. **Transcribe**: Audio is processed locally with Whisper
@@ -513,4 +513,4 @@ Releases are automated via GitHub Actions:
 - Built with modern Wayland and PipeWire integration for the Linux desktop
 - Uses local Whisper models via whisper-rs for privacy and speed
 - Wayland clipboard support via wl-clipboard-rs
-- OpenAI Whisper for both local and cloud speech recognition 
+- OpenAI Whisper for both local and cloud speech recognition

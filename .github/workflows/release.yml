@@ -54,7 +54,7 @@ jobs:
             name: simple-stt-linux-aarch64
 
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -123,12 +123,12 @@ jobs:
           script: |
             const tag = context.payload.inputs?.tag || context.ref.replace('refs/tags/', '');
             const releaseId = ${{ needs.create-release.outputs.release_id }};
-            
+
             // Generate release notes
             const releaseNotes = `# Simple STT ${tag}
-            
+
             A Wayland-native speech-to-text client with PipeWire integration for modern Linux desktops.
-            
+
             ## Features
             - 🎤 Local and cloud-based Whisper transcription
             - 🌊 Wayland-native clipboard support (wl-clipboard)
@@ -137,78 +137,78 @@ jobs:
             - 🎯 Intelligent silence detection with auto-tuning
             - 📝 Multiple output options (clipboard/stdout/auto-paste)
             - 🏠 Privacy-focused local processing by default
-            
+
             ## System Requirements
             - **Wayland compositor** (Hyprland, Sway, GNOME, KDE, etc.)
             - **PipeWire** for audio (standard on modern Linux)
             - **wl-clipboard** for clipboard operations
-            
+
             ## Downloads
-            
+
             Choose the appropriate binary for your Linux system:
-            
-            - **x86_64 (glibc)**: \`simple-stt-linux-x86_64\` 
+
+            - **x86_64 (glibc)**: \`simple-stt-linux-x86_64\`
               - Most Linux distributions (Ubuntu, Fedora, Debian, Arch, openSUSE, etc.)
             - **x86_64 (musl)**: \`simple-stt-linux-x86_64-musl\`
               - Alpine Linux, static binary, minimal dependencies
             - **aarch64**: \`simple-stt-linux-aarch64\`
               - ARM64 Linux (Raspberry Pi 4+, Pine64, other ARM64 systems)
-            
+
             ## Quick Installation
-            
+
             \`\`\`bash
             # Download and install (replace with your architecture)
             wget https://github.com/${{ github.repository }}/releases/download/${tag}/simple-stt-linux-x86_64
             chmod +x simple-stt-linux-x86_64
             sudo mv simple-stt-linux-x86_64 /usr/local/bin/simple-stt
-            
+
             # Verify installation
             simple-stt --check-config
             \`\`\`
-            
+
             ## Verification
-            
+
             Each binary includes a SHA256 checksum file. Verify your download:
             \`\`\`bash
             # Download checksum file
             wget https://github.com/${{ github.repository }}/releases/download/${tag}/simple-stt-linux-x86_64.sha256
-            
+
             # Verify integrity
             sha256sum -c simple-stt-linux-x86_64.sha256
             \`\`\`
-            
+
             ## Distribution Packages
-            
+
             ### Arch Linux (AUR)
             \`\`\`bash
             # Install from AUR (if available)
             yay -S simple-stt-rs
             \`\`\`
-            
+
             ### Manual Installation
             For other distributions, use the pre-built binaries above or build from source.
-            
+
             ## Usage
-            
+
             \`\`\`bash
             # Basic usage (clipboard output)
             simple-stt
-            
+
             # Output to stdout
             simple-stt --stdout
-            
+
             # Check configuration
             simple-stt --check-config
-            
+
             # Tune audio settings
             simple-stt --tune
             \`\`\`
-            
+
             For full documentation and configuration options, visit the [README](https://github.com/${{ github.repository }}/blob/main/README.md).`;
-            
+
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               release_id: releaseId,
               body: releaseNotes
-            }); 
+            });

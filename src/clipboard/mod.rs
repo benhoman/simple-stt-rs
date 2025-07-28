@@ -49,7 +49,7 @@ impl ClipboardManager {
 
     /// Copy using wl-copy command
     fn copy_with_wl_copy(&mut self, text: &str) -> Result<()> {
-        if !which("wl-copy").is_ok() {
+        if which("wl-copy").is_err() {
             return Err(anyhow::anyhow!(
                 "wl-copy not found. Install wl-clipboard for Wayland clipboard support"
             ));
@@ -117,7 +117,7 @@ impl ClipboardManager {
     /// Paste using wtype (Wayland native)
     async fn paste_with_wtype(&self) -> Result<()> {
         let output = Command::new("wtype")
-            .args(&["-M", "ctrl", "-P", "v", "-m", "ctrl"])
+            .args(["-M", "ctrl", "-P", "v", "-m", "ctrl"])
             .output()
             .context("Failed to execute wtype")?;
 
@@ -132,7 +132,7 @@ impl ClipboardManager {
     /// Paste using ydotool (universal)
     async fn paste_with_ydotool(&self) -> Result<()> {
         let output = Command::new("ydotool")
-            .args(&["key", "ctrl+v"])
+            .args(["key", "ctrl+v"])
             .output()
             .context("Failed to execute ydotool")?;
 
@@ -151,7 +151,7 @@ impl ClipboardManager {
 
     /// Get clipboard content using wl-paste command
     fn get_with_wl_paste(&self) -> Result<String> {
-        if !which("wl-paste").is_ok() {
+        if which("wl-paste").is_err() {
             return Err(anyhow::anyhow!(
                 "wl-paste not found. Install wl-clipboard for Wayland clipboard support"
             ));
@@ -219,10 +219,9 @@ mod tests {
 
     #[test]
     fn test_check_tools() {
-        let (clipboard_tools, paste_tools) = ClipboardManager::check_tools();
+        let (_clipboard_tools, _paste_tools) = ClipboardManager::check_tools();
         // Should return vectors (might be empty in CI)
-        assert!(clipboard_tools.len() >= 0);
-        assert!(paste_tools.len() >= 0);
+        // Note: .len() is always >= 0 for Vec, so no assertion needed
     }
 
     #[test]

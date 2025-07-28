@@ -85,7 +85,7 @@ impl LlmRefiner {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", api_key))?,
+            HeaderValue::from_str(&format!("Bearer {api_key}"))?,
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
@@ -206,16 +206,19 @@ impl LlmRefiner {
     }
 
     /// Get the configured provider
+    #[allow(dead_code)]
     pub fn provider(&self) -> &str {
         &self.config.provider
     }
 
     /// Get the configured model
+    #[allow(dead_code)]
     pub fn model(&self) -> &str {
         &self.config.model
     }
 
     /// List available profiles
+    #[allow(dead_code)]
     pub fn list_profiles(&self) -> &std::collections::HashMap<String, LlmProfile> {
         &self.config.profiles
     }

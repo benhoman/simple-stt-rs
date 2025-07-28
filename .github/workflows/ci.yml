@@ -100,4 +100,4 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-cargo-build-target-
 
       - name: Check build
-        run: cargo check --target ${{ matrix.target }} 
+        run: cargo check --target ${{ matrix.target }}

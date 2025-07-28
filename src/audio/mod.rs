@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Host, SampleRate, StreamConfig};
+use cpal::{Device, SampleRate, StreamConfig};
 use hound::{WavSpec, WavWriter};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,7 +20,6 @@ pub struct AudioSample {
 
 pub struct AudioRecorder {
     config: AudioConfig,
-    host: Host,
     device: Device,
     sample_rate: u32,
     channels: u16,
@@ -70,7 +69,6 @@ impl AudioRecorder {
 
         Ok(Self {
             config: config.audio.clone(),
-            host,
             device,
             sample_rate,
             channels,
@@ -173,7 +171,7 @@ impl AudioRecorder {
                         for &sample in &samples_i16 {
                             if let Err(e) = writer_guard.write_sample(sample) {
                                 let _ =
-                                    error_tx1.send(format!("Failed to write audio sample: {}", e));
+                                    error_tx1.send(format!("Failed to write audio sample: {e}"));
                                 recording_clone.store(false, Ordering::Relaxed);
                                 return;
                             }
@@ -185,7 +183,7 @@ impl AudioRecorder {
                 },
                 move |err| {
                     warn!("Audio stream error: {}", err);
-                    let _ = error_tx2.send(format!("Audio stream error: {}", err));
+                    let _ = error_tx2.send(format!("Audio stream error: {err}"));
                 },
                 None,
             )
@@ -239,10 +237,7 @@ impl AudioRecorder {
             duration_seconds
         );
         println!("🎯 Starting silence threshold tuning...");
-        println!(
-            "This will record for {} seconds. Follow the prompts below:",
-            duration_seconds
-        );
+        println!("This will record for {duration_seconds} seconds. Follow the prompts below:");
         println!();
 
         let config = StreamConfig {
@@ -263,7 +258,7 @@ impl AudioRecorder {
 
         let start_time = Instant::now();
 
-        println!("🔇 First, stay SILENT for {} seconds...", silence_time);
+        println!("🔇 First, stay SILENT for {silence_time} seconds...");
 
         // Build the input stream for tuning
         let stream = self
@@ -307,17 +302,16 @@ impl AudioRecorder {
             if Instant::now().duration_since(last_feedback) >= Duration::from_secs(1) {
                 if elapsed.as_secs() < silence_time {
                     let remaining = silence_time - elapsed.as_secs();
-                    println!("🔇 Stay silent... {}s remaining", remaining);
+                    println!("🔇 Stay silent... {remaining}s remaining");
                 } else if !speech_prompted {
                     println!(
-                        "🗣️  Now SPEAK CLEARLY for {} seconds... (say anything, read text, etc.)",
-                        speech_time
+                        "🗣️  Now SPEAK CLEARLY for {speech_time} seconds... (say anything, read text, etc.)"
                     );
                     speech_prompted = true;
                 } else {
                     let remaining = duration_seconds - elapsed.as_secs();
                     if remaining > 0 {
-                        println!("🗣️  Keep talking... {}s remaining", remaining);
+                        println!("🗣️  Keep talking... {remaining}s remaining");
                     }
                 }
                 last_feedback = Instant::now();
@@ -362,12 +356,12 @@ impl AudioRecorder {
 
         println!();
         println!("📊 Analysis Results:");
-        println!("   Average silence volume: {:.1}", avg_silence);
-        println!("   Maximum silence volume: {:.1}", max_silence);
-        println!("   95th percentile silence: {:.1}", p95_silence);
-        println!("   Average speech volume: {:.1}", avg_speech);
-        println!("   Minimum speech volume: {:.1}", min_speech);
-        println!("   10th percentile speech: {:.1}", p10_speech);
+        println!("   Average silence volume: {avg_silence:.1}");
+        println!("   Maximum silence volume: {max_silence:.1}");
+        println!("   95th percentile silence: {p95_silence:.1}");
+        println!("   Average speech volume: {avg_speech:.1}");
+        println!("   Minimum speech volume: {min_speech:.1}");
+        println!("   10th percentile speech: {p10_speech:.1}");
 
         // Improved algorithm: Calculate multiple thresholds
         let gap = p10_speech - max_silence;
@@ -380,28 +374,16 @@ impl AudioRecorder {
 
             println!();
             println!("🎯 Threshold Suggestions (try in order):");
-            println!(
-                "   🟢 Balanced: {:.1}     (recommended - stops on natural pauses)",
-                balanced
-            );
-            println!(
-                "   🔵 Conservative: {:.1}  (stops quickly, may cut off speech)",
-                conservative
-            );
-            println!(
-                "   🟡 Aggressive: {:.1}   (allows long pauses, slower to stop)",
-                aggressive
-            );
+            println!("   🟢 Balanced: {balanced:.1}     (recommended - stops on natural pauses)");
+            println!("   🔵 Conservative: {conservative:.1}  (stops quickly, may cut off speech)");
+            println!("   🟡 Aggressive: {aggressive:.1}   (allows long pauses, slower to stop)");
             println!();
             println!("💡 Start with the balanced setting. If it cuts you off, try aggressive.");
             println!("   If it doesn't stop, try conservative.");
 
             // Use balanced as the auto-applied setting
             let optimal_threshold = balanced;
-            println!(
-                "✅ Auto-applying balanced threshold: {:.1}",
-                optimal_threshold
-            );
+            println!("✅ Auto-applying balanced threshold: {optimal_threshold:.1}");
 
             Ok(Some(optimal_threshold))
         } else {
@@ -414,23 +396,14 @@ impl AudioRecorder {
             println!();
             println!("⚠️  Overlapping silence/speech levels detected!");
             println!("🎯 Threshold Suggestions (experiment needed):");
-            println!("   🟢 Balanced: {:.1}     (starting point)", balanced);
-            println!(
-                "   🔵 Conservative: {:.1}  (try if balanced doesn't stop)",
-                conservative
-            );
-            println!(
-                "   🟡 Aggressive: {:.1}   (try if balanced cuts you off)",
-                aggressive
-            );
+            println!("   🟢 Balanced: {balanced:.1}     (starting point)");
+            println!("   🔵 Conservative: {conservative:.1}  (try if balanced doesn't stop)");
+            println!("   🟡 Aggressive: {aggressive:.1}   (try if balanced cuts you off)");
             println!();
             println!("💡 Your microphone setup may need adjustment or try --tune again in a quieter environment.");
 
             let optimal_threshold = balanced;
-            println!(
-                "✅ Auto-applying balanced threshold: {:.1}",
-                optimal_threshold
-            );
+            println!("✅ Auto-applying balanced threshold: {optimal_threshold:.1}");
 
             Ok(Some(optimal_threshold))
         }

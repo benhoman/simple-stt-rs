@@ -16,7 +16,7 @@ use llm::LlmRefiner;
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        eprintln!("❌ Error: {}", e);
+        eprintln!("❌ Error: {e}");
         process::exit(1);
     }
 }
@@ -165,7 +165,7 @@ async fn tune_threshold(config: &Config) -> Result<()> {
             .update_silence_threshold(threshold)
             .context("Failed to save updated configuration")?;
 
-        println!("✅ Updated config with new threshold: {:.1}", threshold);
+        println!("✅ Updated config with new threshold: {threshold:.1}");
         println!("You can now use the STT system with optimized settings!");
         info!("Silence threshold tuning completed: {:.1}", threshold);
     } else {
@@ -227,10 +227,7 @@ async fn tune_threshold_interactive(config: &Config) -> Result<()> {
         test_config.audio.silence_threshold = threshold;
         let mut test_recorder = AudioRecorder::new(&test_config)?;
 
-        println!(
-            "🎤 Testing threshold {:.1} - speak for ~5 seconds, then pause...",
-            threshold
-        );
+        println!("🎤 Testing threshold {threshold:.1} - speak for ~5 seconds, then pause...");
         println!("⏱️  Recording will start in 3 seconds...");
 
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
@@ -248,7 +245,7 @@ async fn tune_threshold_interactive(config: &Config) -> Result<()> {
 
                 if feedback.trim().to_lowercase().starts_with('y') {
                     successful_threshold = Some(threshold);
-                    println!("🎉 Great! Threshold {:.1} marked as working!", threshold);
+                    println!("🎉 Great! Threshold {threshold:.1} marked as working!");
                 } else {
                     println!("👍 Noted. Try a different value:");
                     println!(
@@ -271,7 +268,7 @@ async fn tune_threshold_interactive(config: &Config) -> Result<()> {
                 println!();
             }
             Err(e) => {
-                println!("❌ Test recording failed: {}", e);
+                println!("❌ Test recording failed: {e}");
                 println!("Try a different threshold.");
                 println!();
             }
@@ -285,7 +282,7 @@ async fn tune_threshold_interactive(config: &Config) -> Result<()> {
             .update_silence_threshold(threshold)
             .context("Failed to save updated configuration")?;
 
-        println!("🎯 Applied successful threshold: {:.1}", threshold);
+        println!("🎯 Applied successful threshold: {threshold:.1}");
         println!("✅ Configuration saved! Ready to use STT system.");
     } else {
         println!("💡 No threshold was marked as successful.");
@@ -312,11 +309,11 @@ async fn run_stt(config: &Config, profile: Option<&str>, use_stdout: bool) -> Re
     info!("Starting STT process with profile: {:?}", profile);
 
     // Initialize managers
-    let mut ui_manager = UiManager::new(&config);
-    let mut audio_recorder = AudioRecorder::new(&config)?;
-    let mut stt_processor = SttProcessor::new(&config)?;
-    let llm_refiner = LlmRefiner::new(&config)?;
-    let mut clipboard_manager = ClipboardManager::new(&config)?;
+    let mut ui_manager = UiManager::new(config);
+    let mut audio_recorder = AudioRecorder::new(config)?;
+    let mut stt_processor = SttProcessor::new(config)?;
+    let llm_refiner = LlmRefiner::new(config)?;
+    let mut clipboard_manager = ClipboardManager::new(config)?;
 
     // Check LLM configuration
     let llm_configured = llm_refiner.is_configured();
@@ -352,14 +349,14 @@ async fn run_stt(config: &Config, profile: Option<&str>, use_stdout: bool) -> Re
         Ok(Ok(processor)) => processor,
         Ok(Err(e)) => {
             warn!("STT preparation failed: {}", e);
-            println!("❌ STT preparation failed: {}", e);
+            println!("❌ STT preparation failed: {e}");
             println!("🎤 Audio was recorded successfully but transcription is unavailable");
             ui_manager.set_error("STT preparation failed");
             return Ok(());
         }
         Err(e) => {
             warn!("STT preparation task failed: {}", e);
-            println!("❌ STT preparation task failed: {}", e);
+            println!("❌ STT preparation task failed: {e}");
             ui_manager.set_error("STT preparation task failed");
             return Ok(());
         }
@@ -376,9 +373,9 @@ async fn run_stt(config: &Config, profile: Option<&str>, use_stdout: bool) -> Re
     // Check if STT processor is now configured after preparation
     if !stt_processor.is_configured() {
         println!("🎤 Audio recorded successfully!");
-        println!("📁 Audio file saved to: {:?}", audio_file);
+        println!("📁 Audio file saved to: {audio_file:?}");
         if let Some(error) = stt_processor.preparation_failed() {
-            println!("❌ STT preparation failed: {}", error);
+            println!("❌ STT preparation failed: {error}");
         } else {
             println!("💡 STT backend not configured properly");
         }
@@ -399,7 +396,7 @@ async fn run_stt(config: &Config, profile: Option<&str>, use_stdout: bool) -> Re
         }
         Err(e) => {
             warn!("Transcription failed: {}", e);
-            println!("❌ Transcription failed: {}", e);
+            println!("❌ Transcription failed: {e}");
             println!("🎤 Audio was recorded successfully but couldn't be transcribed");
             ui_manager.set_error("Transcription failed");
             return Ok(());
@@ -437,7 +434,7 @@ async fn run_stt(config: &Config, profile: Option<&str>, use_stdout: bool) -> Re
     // Handle output - stdout or clipboard/paste
     if use_stdout {
         // Output to stdout
-        println!("{}", final_text);
+        println!("{final_text}");
         info!("STT process completed successfully - output to stdout");
     } else {
         // Handle clipboard/paste
@@ -454,7 +451,7 @@ async fn run_stt(config: &Config, profile: Option<&str>, use_stdout: bool) -> Re
             Err(e) => {
                 warn!("Clipboard operation failed: {}", e);
                 println!("⚠️  Transcription successful but clipboard operation failed:");
-                println!("📝 Transcribed text: \"{}\"", final_text);
+                println!("📝 Transcribed text: \"{final_text}\"");
                 ui_manager.set_status("⚠️ Transcription done, clipboard failed", "#ffaa00");
             }
         }
@@ -498,16 +495,16 @@ fn check_configuration(config: &Config) -> Result<()> {
         );
         println!("   Model: {}", config.whisper.model);
         if let Some(lang) = &config.whisper.language {
-            println!("   Language: {}", lang);
+            println!("   Language: {lang}");
         }
         if config.whisper.backend == "local" {
             println!("   Device: {}", config.whisper.device);
             if let Some(path) = &config.whisper.model_path {
-                println!("   Model Path: {}", path);
+                println!("   Model Path: {path}");
             } else {
                 match get_model_path(&config.whisper) {
                     Ok(default_path) => {
-                        println!("   Model Path: {:?} (default)", default_path);
+                        println!("   Model Path: {default_path:?} (default)");
                         if default_path.exists() {
                             println!("   Model Status: ✅ Available");
                         } else if config.whisper.download_models {
@@ -533,7 +530,7 @@ fn check_configuration(config: &Config) -> Result<()> {
                     println!("   💡 Download model manually or enable auto-download");
                 }
                 if let Ok(model_path) = get_model_path(&config.whisper) {
-                    println!("   📁 Expected location: {:?}", model_path);
+                    println!("   📁 Expected location: {model_path:?}");
                     println!("   🌐 Download from: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{}.bin", config.whisper.model);
                 }
             }
@@ -620,7 +617,7 @@ fn get_model_path(config: &simple_stt_rs::config::WhisperConfig) -> Result<std::
         // Default model path in cache directory
         let cache_dir = dirs::cache_dir()
             .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
-            .unwrap_or_else(|| std::env::temp_dir());
+            .unwrap_or_else(std::env::temp_dir);
 
         let model_dir = cache_dir.join("simple-stt").join("models");
         let model_file = format!("ggml-{}.bin", config.model);

@@ -42,14 +42,14 @@ impl UiManager {
                 .map(|start| start.elapsed().as_secs_f32())
                 .unwrap_or(0.0);
 
-            println!("[{:6.1}s] {}", elapsed, message);
+            println!("[{elapsed:6.1}s] {message}");
         }
     }
 
     /// Update recording status
     pub fn start_recording(&mut self, profile: Option<&str>) {
         let message = if let Some(profile) = profile {
-            format!("🎤 Recording (profile: {})...", profile)
+            format!("🎤 Recording (profile: {profile})...")
         } else {
             "🎤 Recording...".to_string()
         };
@@ -79,7 +79,7 @@ impl UiManager {
     /// Show refinement status
     pub fn set_refining(&mut self, profile: Option<&str>) {
         let message = if let Some(profile) = profile {
-            format!("🔄 Refining text (profile: {})...", profile)
+            format!("🔄 Refining text (profile: {profile})...")
         } else {
             "🔄 Refining text...".to_string()
         };
@@ -98,12 +98,12 @@ impl UiManager {
 
     /// Show error status
     pub fn set_error(&mut self, error: &str) {
-        self.set_status(&format!("❌ {}", error), "#ff4444");
+        self.set_status(&format!("❌ {error}"), "#ff4444");
     }
 
     /// Show warning status
     pub fn set_warning(&mut self, warning: &str) {
-        self.set_status(&format!("⚠️ {}", warning), "#ffaa00");
+        self.set_status(&format!("⚠️ {warning}"), "#ffaa00");
     }
 
     /// Clean up UI resources

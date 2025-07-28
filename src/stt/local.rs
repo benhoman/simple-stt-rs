@@ -60,8 +60,7 @@ impl LocalSttBackend {
                 info!("✅ Model downloaded successfully: {:?}", model_path);
             } else {
                 let error_msg = format!(
-                    "Whisper model not found at {:?} and download_models is disabled",
-                    model_path
+                    "Whisper model not found at {model_path:?} and download_models is disabled"
                 );
                 warn!("{}", error_msg);
                 self.preparation_status = PreparationStatus::Failed(error_msg.clone());
@@ -82,7 +81,7 @@ impl LocalSttBackend {
                 Ok(())
             }
             Err(e) => {
-                let error_msg = format!("Failed to load Whisper model: {}", e);
+                let error_msg = format!("Failed to load Whisper model: {e}");
                 warn!("{}", error_msg);
                 warn!("Local backend will be unavailable");
                 info!("💡 Try downloading the model manually or check the file path");
@@ -215,7 +214,7 @@ async fn download_model(model_name: &str, model_path: &Path) -> Result<()> {
     let repo = api.model("ggerganov/whisper.cpp".to_string());
 
     // Model filename on Hugging Face
-    let filename = format!("ggml-{}.bin", model_name);
+    let filename = format!("ggml-{model_name}.bin");
 
     info!("🌐 Fetching model file: {}", filename);
 
@@ -223,7 +222,7 @@ async fn download_model(model_name: &str, model_path: &Path) -> Result<()> {
     let model_file = repo
         .get(&filename)
         .await
-        .with_context(|| format!("Failed to download model file: {}", filename))?;
+        .with_context(|| format!("Failed to download model file: {filename}"))?;
 
     // Copy the downloaded file to the target location
     debug!("💾 Saving model to: {:?}", model_path);
@@ -253,7 +252,7 @@ fn get_model_path(config: &WhisperConfig) -> Result<PathBuf> {
         // Default model path in cache directory
         let cache_dir = dirs::cache_dir()
             .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
-            .unwrap_or_else(|| std::env::temp_dir());
+            .unwrap_or_else(std::env::temp_dir);
 
         let model_dir = cache_dir.join("simple-stt").join("models");
         let model_file = format!("ggml-{}.bin", config.model);

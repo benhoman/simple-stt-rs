@@ -157,25 +157,13 @@ impl Default for UiConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     pub audio: AudioConfig,
     pub whisper: WhisperConfig,
     pub llm: LlmConfig,
     pub clipboard: ClipboardConfig,
     pub ui: UiConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            audio: AudioConfig::default(),
-            whisper: WhisperConfig::default(),
-            llm: LlmConfig::default(),
-            clipboard: ClipboardConfig::default(),
-            ui: UiConfig::default(),
-        }
-    }
 }
 
 impl Config {
@@ -194,7 +182,7 @@ impl Config {
         }
 
         let content = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
+            .with_context(|| format!("Failed to read config file: {config_path:?}"))?;
 
         let mut config: Self =
             serde_yaml::from_str(&content).with_context(|| "Failed to parse YAML configuration")?;
@@ -212,14 +200,14 @@ impl Config {
 
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create config directory: {:?}", parent))?;
+                .with_context(|| format!("Failed to create config directory: {parent:?}"))?;
         }
 
         let content =
             serde_yaml::to_string(self).with_context(|| "Failed to serialize configuration")?;
 
         std::fs::write(&config_path, content)
-            .with_context(|| format!("Failed to write config file: {:?}", config_path))?;
+            .with_context(|| format!("Failed to write config file: {config_path:?}"))?;
 
         debug!("Configuration saved to: {:?}", config_path);
         Ok(())

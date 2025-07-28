@@ -37,4 +37,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multiple output options (clipboard, stdout, auto-paste)
 - XDG-compliant configuration management
 - Comprehensive logging system
-- Interactive and non-interactive modes 
+- Interactive and non-interactive modes

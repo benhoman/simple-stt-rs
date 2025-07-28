@@ -4,8 +4,8 @@ This document explains how to add local transcription support to simple-stt-rs.
 
 ## Current Status
 
-✅ **Architecture Ready**: The codebase now supports multiple STT backends via an enum-based approach  
-✅ **Configuration Ready**: Backend selection and local-specific config options are implemented  
+✅ **Architecture Ready**: The codebase now supports multiple STT backends via an enum-based approach
+✅ **Configuration Ready**: Backend selection and local-specific config options are implemented
 ❌ **Local Backend**: Not yet implemented (currently returns an error)
 
 ## Implementation Options
@@ -159,7 +159,7 @@ impl LocalSttBackend {
         #[cfg(feature = "local")]
         {
             let audio_path = audio_path.as_ref();
-            
+
             if !audio_path.exists() {
                 return Err(anyhow::anyhow!("Audio file not found: {:?}", audio_path));
             }
@@ -171,11 +171,11 @@ impl LocalSttBackend {
 
             // Setup transcription parameters
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-            
+
             if let Some(ref language) = self.config.language {
                 params.set_language(Some(language));
             }
-            
+
             params.set_print_special(false);
             params.set_print_progress(false);
             params.set_print_realtime(false);
@@ -198,7 +198,7 @@ impl LocalSttBackend {
             }
 
             let text = result.trim().to_string();
-            
+
             if text.is_empty() {
                 info!("❌ No speech detected in audio");
                 Ok(None)
@@ -253,14 +253,14 @@ impl SttBackend {
             SttBackend::Local(backend) => backend.is_configured(),  // Uncomment
         }
     }
-    
+
     pub fn model(&self) -> &str {
         match self {
             SttBackend::Api(backend) => backend.model(),
             SttBackend::Local(backend) => backend.model(),  // Uncomment
         }
     }
-    
+
     pub async fn transcribe<P: AsRef<Path>>(&self, audio_path: P) -> Result<Option<String>> {
         match self {
             SttBackend::Api(backend) => backend.transcribe(audio_path).await,
@@ -322,10 +322,10 @@ Local models that could be supported:
 
 ## Benefits of Local Transcription
 
-✅ **Privacy**: Audio never leaves your machine  
-✅ **Speed**: No network latency  
-✅ **Offline**: Works without internet  
-✅ **Cost**: No API costs  
+✅ **Privacy**: Audio never leaves your machine
+✅ **Speed**: No network latency
+✅ **Offline**: Works without internet
+✅ **Cost**: No API costs
 ✅ **Reliability**: No rate limits or API downtime
 
 ## Next Steps
@@ -337,4 +337,4 @@ Local models that could be supported:
 5. Add device selection (CPU/GPU)
 6. Optimize for performance
 
-The architecture is ready - just need to implement the local backend! 
+The architecture is ready - just need to implement the local backend!

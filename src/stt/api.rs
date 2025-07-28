@@ -80,7 +80,7 @@ impl ApiSttBackend {
         let response = self
             .client
             .post("https://api.openai.com/v1/audio/transcriptions")
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", format!("Bearer {api_key}"))
             .multipart(form)
             .send()
             .await
