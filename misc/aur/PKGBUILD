@@ -1,0 +1,22 @@
+# Maintainer: Your Name <you@example.com>
+pkgname=simple-stt
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A Wayland-native speech-to-text client with PipeWire integration"
+arch=('x86_64')
+url="https://github.com/benhoman/simple-stt-rs"
+license=('MIT' 'Apache')
+depends=('pipewire' 'wl-clipboard')
+makedepends=('rust' 'cargo' 'git' 'alsa-lib')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/benhoman/simple-stt-rs/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/simple-stt-rs-$pkgver"
+  cargo build --release --locked
+}
+
+package() {
+  cd "$srcdir/simple-stt-rs-$pkgver"
+  install -Dm755 "target/release/simple-stt" "$pkgdir/usr/bin/simple-stt"
+}
