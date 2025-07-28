@@ -62,6 +62,36 @@ Record → Save audio file
 
 ## Installation
 
+### From Releases (Recommended)
+
+Download pre-built binaries from the [GitHub Releases](https://github.com/benhoman/simple-stt-rs/releases) page:
+
+1. **Download the appropriate binary** for your Linux system:
+   - **x86_64 (glibc)**: `simple-stt-linux-x86_64` - Most Linux distributions (Ubuntu, Fedora, Debian, Arch, openSUSE, etc.)
+   - **x86_64 (musl)**: `simple-stt-linux-x86_64-musl` - Alpine Linux, static binary with minimal dependencies
+   - **ARM64**: `simple-stt-linux-aarch64` - ARM64 Linux (Raspberry Pi 4+, Pine64, other ARM64 systems)
+
+2. **Make it executable**:
+   ```bash
+   chmod +x simple-stt-linux-*
+   ```
+
+3. **Move to your PATH**:
+   ```bash
+   sudo mv simple-stt-linux-* /usr/local/bin/simple-stt
+   ```
+
+4. **Verify installation**:
+   ```bash
+   simple-stt --check-config
+   ```
+
+5. **Verify download integrity** (optional):
+   ```bash
+   # Download the .sha256 file and verify
+   sha256sum -c simple-stt-linux-*.sha256
+   ```
+
 ### Prerequisites
 
 #### Linux (Ubuntu/Debian)
@@ -444,6 +474,38 @@ The application is organized into several modules:
 ## License
 
 MIT License - see LICENSE file for details.
+
+## Development
+
+### Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+### Releasing
+
+Releases are automated via GitHub Actions:
+
+1. **Create a version tag**:
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+2. **GitHub Actions automatically**:
+   - Builds binaries for all supported platforms
+   - Creates SHA256 checksums
+   - Generates a GitHub release with detailed notes
+   - Uploads all artifacts
+
+3. **Manual release** (if needed):
+   - Go to GitHub Actions → Release workflow
+   - Click "Run workflow" and enter the tag name
+
+### CI/CD Status
+
+- **CI**: Runs tests and checks on every push/PR
+- **Release**: Automated multi-architecture Linux builds on version tags
+- **Platforms**: Linux x86_64 (glibc, musl), Linux ARM64
 
 ## Acknowledgments
 
