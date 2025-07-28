@@ -22,7 +22,7 @@ jobs:
   create-release:
     runs-on: ubuntu-latest
     outputs:
-      release_id: ${{ steps.create-release.outputs.result }}
+      release_id: ${{ steps.create-release.outputs.release_id }}
       upload_url: ${{ steps.create-release.outputs.upload_url }}
     steps:
       - name: Create release
@@ -40,7 +40,8 @@ jobs:
               draft: false,
               prerelease: tag.includes('-'),
             });
-            return release.data.id;
+            core.setOutput("release_id", release.data.id);
+            core.setOutput("upload_url", release.data.upload_url);
 
   build:
     needs: create-release
@@ -98,7 +99,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.step_upload_url.outputs.upload_url }}
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_path: ${{ matrix.name }}
           asset_name: ${{ matrix.name }}
           asset_content_type: application/octet-stream
@@ -125,7 +126,7 @@ jobs:
         with:
           script: |
             const tag = context.payload.inputs?.tag || context.ref.replace('refs/tags/', '');
-            const releaseId = ${{ needs.create-release.outputs.release_id }};
+            const releaseId = '${{ needs.create-release.outputs.release_id }}';
 
             // Generate release notes
             const releaseNotes = `# Simple STT ${tag}
