@@ -31,7 +31,7 @@ hound = "3.5"
 tokio = { version = "1.0", features = ["full"] }
 
 # HTTP client for API backend
-reqwest = { version = "0.11", features = ["json", "stream", "multipart"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "multipart", "rustls-tls"] }
 
 # Local transcription
 whisper-rs = "0.12"
