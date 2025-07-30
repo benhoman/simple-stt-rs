@@ -1,22 +1,19 @@
-# Maintainer: Your Name <you@example.com>
-pkgname=simple-stt
-pkgver=0.1.0
+# Maintainer: Ben Homan <ben@benhoman.com>
+pkgname=simple-stt-rs-bin
+pkgver=0.2.0
 pkgrel=1
-pkgdesc="A Wayland-native speech-to-text client with PipeWire integration"
+pkgdesc="A simple speech-to-text utility using Whisper + PipeWire (binary release)"
 arch=('x86_64')
 url="https://github.com/benhoman/simple-stt-rs"
-license=('MIT' 'Apache')
+license=('MIT')
 depends=('pipewire' 'wl-clipboard')
-makedepends=('rust' 'cargo' 'git' 'alsa-lib')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/benhoman/simple-stt-rs/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
-
-build() {
-  cd "$srcdir/simple-stt-rs-$pkgver"
-  cargo build --release --locked
-}
+provides=('simple-stt')
+conflicts=('simple-stt')
+source=(
+  "$pkgname-$pkgver::https://github.com/benhoman/simple-stt-rs/releases/download/v$pkgver/simple-stt-linux-${CARCH}"
+)
+sha256sums=('8566fb6fffea0e22e4ff504b75e4b7f9ec84d5ab3cc10443d0eaa74eba2b890e') # You can replace this with the actual SHA256 sum for verification.
 
 package() {
-  cd "$srcdir/simple-stt-rs-$pkgver"
-  install -Dm755 "target/release/simple-stt" "$pkgdir/usr/bin/simple-stt"
+  install -Dm755 "$srcdir/$pkgname-$pkgver" "$pkgdir/usr/bin/simple-stt"
 }
