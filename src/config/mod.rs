@@ -6,15 +6,13 @@ use std::path::PathBuf;
 use tracing::{debug, info};
 
 const APP_NAME: &str = "simple-stt";
-const CONFIG_FILE: &str = "config.yaml";
+const CONFIG_FILE: &str = "config.toml";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioConfig {
     pub sample_rate: u32,
     pub channels: u16,
     pub chunk_size: usize,
-    pub silence_threshold: f32,
-    pub silence_duration: f64,
     pub max_recording_time: f64,
 }
 
@@ -24,8 +22,6 @@ impl Default for AudioConfig {
             sample_rate: 16000,
             channels: 1,
             chunk_size: 2048,
-            silence_threshold: 15.0,
-            silence_duration: 2.0,
             max_recording_time: 120.0,
         }
     }
@@ -50,7 +46,7 @@ impl Default for WhisperConfig {
         Self {
             backend: "local".to_string(), // Default to local - better UX, no API keys needed
             api_key: None,
-            model: "tiny.en".to_string(), // Use local model name for local backend
+            model: "base.en".to_string(), // Use local model name for local backend
             language: Some("en".to_string()), // Set default language for better accuracy
             timeout: 60,
             model_path: None, // Will use default cache directory
@@ -185,7 +181,7 @@ impl Config {
             .with_context(|| format!("Failed to read config file: {config_path:?}"))?;
 
         let mut config: Self =
-            serde_yaml::from_str(&content).with_context(|| "Failed to parse YAML configuration")?;
+            toml::from_str(&content).with_context(|| "Failed to parse TOML configuration")?;
 
         // Override with environment variables
         config.apply_env_overrides();
@@ -203,8 +199,7 @@ impl Config {
                 .with_context(|| format!("Failed to create config directory: {parent:?}"))?;
         }
 
-        let content =
-            serde_yaml::to_string(self).with_context(|| "Failed to serialize configuration")?;
+        let content = toml::to_string(self).with_context(|| "Failed to serialize configuration")?;
 
         std::fs::write(&config_path, content)
             .with_context(|| format!("Failed to write config file: {config_path:?}"))?;
@@ -234,27 +229,5 @@ impl Config {
                 debug!("Using ANTHROPIC_API_KEY from environment");
             }
         }
-    }
-
-    /// Get a nested configuration value by dot notation
-    pub fn get_nested(&self, key: &str) -> Option<String> {
-        let parts: Vec<&str> = key.split('.').collect();
-        match parts.as_slice() {
-            ["audio", "silence_threshold"] => Some(self.audio.silence_threshold.to_string()),
-            ["audio", "silence_duration"] => Some(self.audio.silence_duration.to_string()),
-            ["audio", "max_recording_time"] => Some(self.audio.max_recording_time.to_string()),
-            ["whisper", "model"] => Some(self.whisper.model.clone()),
-            ["llm", "provider"] => Some(self.llm.provider.clone()),
-            ["llm", "model"] => Some(self.llm.model.clone()),
-            ["llm", "default_profile"] => Some(self.llm.default_profile.clone()),
-            ["clipboard", "auto_paste"] => Some(self.clipboard.auto_paste.to_string()),
-            _ => None,
-        }
-    }
-
-    /// Update the silence threshold and save
-    pub fn update_silence_threshold(&mut self, threshold: f32) -> Result<()> {
-        self.audio.silence_threshold = threshold;
-        self.save()
     }
 }

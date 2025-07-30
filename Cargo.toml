@@ -1,9 +1,9 @@
 [package]
 name = "simple-stt-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
-description = "A simple speech-to-text CLI client with silence detection and configurable processing"
+authors = ["Ben Homan <ben@benhoman.com>"]
+description = "A shameless rust rip off of simple speech-to-text CLI client with silence detection and configurable processing"
 license = "MIT"
 repository = "https://github.com/benhoman/simple-stt-rs"
 keywords = ["speech-to-text", "audio", "cli", "whisper", "stt"]
@@ -14,13 +14,11 @@ default = []
 # Note: Both API and local backends are always available
 
 [dependencies]
-# CLI and argument parsing
-clap = { version = "4.4", features = ["derive", "env"] }
+
 
 # Configuration and serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
 toml = "0.8"
 
 # Audio handling
@@ -31,17 +29,30 @@ hound = "3.5"
 tokio = { version = "1.0", features = ["full"] }
 
 # HTTP client for API backend (pure rustls, no OpenSSL)
-reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "multipart", "rustls-tls", "rustls-tls-webpki-roots"] }
+reqwest = { version = "0.11", default-features = false, features = [
+  "json",
+  "stream",
+  "multipart",
+  "rustls-tls",
+  "rustls-tls-webpki-roots",
+] }
 
 # Local transcription
 whisper-rs = "0.12"
 
 # Model downloading (use tokio backend with reqwest, not ureq)
-hf-hub = { version = "0.3", default-features = false, features = ["online", "tokio"] }
+hf-hub = { version = "0.3", default-features = false, features = [
+  "online",
+  "tokio",
+] }
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "time"] }
+tracing-subscriber = { version = "0.3", features = [
+  "env-filter",
+  "fmt",
+  "time",
+] }
 tracing-appender = "0.2"
 
 # Error handling
@@ -63,9 +74,13 @@ wl-clipboard-rs = "0.9"
 # Process and command execution
 which = "4.4"
 
+# TUI
+ratatui = { version = "0.26.3", features = ["all-widgets"] }
+crossterm = "0.27.0"
+gag = "1.0.0"
+
 [dev-dependencies]
 tempfile = "3.8"
-
 
 
 [[bin]]

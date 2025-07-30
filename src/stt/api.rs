@@ -5,7 +5,8 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
-use tracing::info;
+use tokio::sync::mpsc::Sender as TokioSender;
+use tracing::info; // New: Import TokioSender
 
 use crate::config::{Config, WhisperConfig};
 
@@ -35,7 +36,11 @@ impl ApiSttBackend {
         &self.config.model
     }
 
-    pub async fn transcribe<P: AsRef<Path>>(&self, audio_path: P) -> Result<Option<String>> {
+    pub async fn transcribe<P: AsRef<Path>>(
+        &self,
+        audio_path: P,
+        log_tx: Option<TokioSender<String>>,
+    ) -> Result<Option<String>> {
         let audio_path = audio_path.as_ref();
 
         if !audio_path.exists() {
@@ -89,11 +94,11 @@ impl ApiSttBackend {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(
-                "OpenAI API request failed with status {}: {}",
-                status,
-                error_text
-            ));
+            let error_msg = format!("OpenAI API request failed with status {status}: {error_text}");
+            if let Some(tx) = log_tx {
+                tx.send(error_msg.clone()).await.ok();
+            }
+            return Err(anyhow::anyhow!(error_msg));
         }
 
         let result: Value = response
@@ -109,6 +114,11 @@ impl ApiSttBackend {
 
         if text.is_empty() {
             info!("❌ No speech detected in audio");
+            if let Some(tx) = log_tx {
+                tx.send("API Transcription: No speech detected.".to_string())
+                    .await
+                    .ok();
+            }
             Ok(None)
         } else {
             info!("✅ API transcription successful: \"{}\"", text);

@@ -1,14 +1,16 @@
 use anyhow::Result;
 use std::path::Path;
-use tracing::info;
+use tokio::sync::mpsc::Sender as TokioSender;
+use tracing::info; // New: Import TokioSender
 
 use crate::config::{Config, WhisperConfig};
+use crate::stt::api::ApiSttBackend;
+use crate::stt::local::LocalSttBackend;
 
 mod api;
 mod local;
 
-pub use api::ApiSttBackend;
-pub use local::LocalSttBackend;
+pub mod wav_utils;
 
 /// Enum representing different STT backend implementations
 pub enum SttBackend {
@@ -61,10 +63,14 @@ impl SttBackend {
     }
 
     /// Transcribe an audio file
-    pub async fn transcribe<P: AsRef<Path>>(&self, audio_path: P) -> Result<Option<String>> {
+    pub async fn transcribe<P: AsRef<Path>>(
+        &self,
+        audio_path: P,
+        log_tx: Option<TokioSender<String>>,
+    ) -> Result<Option<String>> {
         match self {
-            SttBackend::Api(backend) => backend.transcribe(audio_path).await,
-            SttBackend::Local(backend) => backend.transcribe(audio_path).await,
+            SttBackend::Api(backend) => backend.transcribe(audio_path, log_tx).await,
+            SttBackend::Local(backend) => backend.transcribe(audio_path, log_tx).await,
         }
     }
 }
@@ -104,8 +110,12 @@ impl SttProcessor {
     }
 
     /// Transcribe audio file using the configured backend
-    pub async fn transcribe<P: AsRef<Path>>(&self, audio_path: P) -> Result<Option<String>> {
-        self.backend.transcribe(audio_path).await
+    pub async fn transcribe<P: AsRef<Path>>(
+        &self,
+        audio_path: P,
+        log_tx: Option<TokioSender<String>>,
+    ) -> Result<Option<String>> {
+        self.backend.transcribe(audio_path, log_tx).await
     }
 
     /// Check if the backend is configured and ready

@@ -1,627 +1,424 @@
 use anyhow::{Context, Result};
-use clap::{Arg, Command};
-use simple_stt_rs::{
-    audio::AudioRecorder, clipboard::ClipboardManager, config::Config, stt::SttProcessor,
-    ui::UiManager,
+use cpal::traits::{DeviceTrait, HostTrait};
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use std::process;
-use tokio::time::{sleep, Duration};
-use tracing::{info, warn};
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use dirs::cache_dir;
+use ratatui::{prelude::*, Terminal};
+use simple_stt_rs::{
+    audio::{AudioData, AudioRecorder},
+    clipboard::ClipboardManager,
+    config::Config,
+    stt::{wav_utils, SttProcessor},
+    tui::{
+        app::{App, AppState},
+        events::handle_key_events,
+        ui::draw,
+    },
+};
+use std::io;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::mpsc as tokio_mpsc;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-mod llm;
-use llm::LlmRefiner;
+async fn load_stt_processor(
+    config: &Config,
+    app: &Arc<Mutex<App>>,
+    log_tx: &tokio_mpsc::Sender<String>,
+) -> Result<Arc<tokio::sync::Mutex<SttProcessor>>> {
+    {
+        let mut app = app.lock().unwrap();
+        app.model_status = format!("Loading {}...", config.whisper.model);
+        app.state = AppState::LoadingModel;
+    }
+
+    let mut stt_processor = match SttProcessor::new(config) {
+        Ok(processor) => processor,
+        Err(e) => {
+            let error_msg = format!("❌ Failed to create STT processor: {e}");
+            {
+                let mut app = app.lock().unwrap();
+                app.model_status = error_msg.clone();
+                app.state = AppState::Idle;
+            }
+            log_tx.send(error_msg).await.ok();
+            return Err(e);
+        }
+    };
+
+    match stt_processor.prepare().await {
+        Ok(_) => {
+            {
+                let mut app = app.lock().unwrap();
+                app.model_status = "✅ Model Ready".to_string();
+                app.state = AppState::Idle;
+            }
+            log_tx
+                .send(format!(
+                    "Model {} loaded successfully",
+                    config.whisper.model
+                ))
+                .await
+                .ok();
+        }
+        Err(e) => {
+            let error_msg = format!("❌ Error loading model: {e}");
+            {
+                let mut app = app.lock().unwrap();
+                app.model_status = error_msg.clone();
+                app.state = AppState::Idle;
+            }
+            log_tx.send(error_msg).await.ok();
+            return Err(e);
+        }
+    }
+
+    Ok(Arc::new(tokio::sync::Mutex::new(stt_processor)))
+}
 
 #[tokio::main]
-async fn main() {
-    if let Err(e) = run().await {
-        eprintln!("❌ Error: {e}");
-        process::exit(1);
-    }
-}
+async fn main() -> Result<()> {
+    setup_logging()?;
+    let config = Config::load()?;
+    let device_name = cpal::default_host()
+        .default_input_device()
+        .and_then(|d| d.name().ok())
+        .unwrap_or_else(|| "Unknown Device".to_string());
+    let app = Arc::new(Mutex::new(App::new(config.clone(), device_name)));
+    let mut terminal = setup_terminal()?;
+    let mut clipboard_manager = ClipboardManager::new(&app.lock().unwrap().config)?;
 
-async fn run() -> Result<()> {
-    let matches = Command::new("simple-stt")
-        .version("0.1.0")
-        .about("A Wayland-native speech-to-text CLI client with silence detection")
-        .long_about("A Rust-based speech-to-text client for Wayland compositors (like Hyprland) that records audio, \
-                     transcribes with Whisper (local or API), refines with LLM (optional), and outputs to clipboard or stdout. \
-                     All features gracefully degrade when not configured.")
-        .arg(
-            Arg::new("tune")
-                .long("tune")
-                .help("Tune the silence threshold for your microphone and environment")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("tune-interactive")
-                .long("tune-interactive")
-                .help("Interactive tuning - test different thresholds with immediate feedback")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("verbose")
-                .short('v')
-                .long("verbose")
-                .help("Enable verbose logging")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("profile")
-                .short('p')
-                .long("profile")
-                .value_name("PROFILE")
-                .help("Use a specific LLM profile (e.g., general, todo, email, slack)")
-                .action(clap::ArgAction::Set),
-        )
-        .arg(
-            Arg::new("list-profiles")
-                .long("list-profiles")
-                .help("List all available LLM profiles")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("check-config")
-                .long("check-config")
-                .help("Check configuration status and show what features are available")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("stdout")
-                .long("stdout")
-                .help("Output transcribed text to stdout instead of copying to clipboard")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .get_matches();
+    let (audio_tx, audio_rx) = mpsc::channel::<AudioData>();
+    let (stt_tx, mut stt_rx) = tokio_mpsc::channel::<String>(1);
+    let (log_tx, mut log_rx) = tokio_mpsc::channel::<String>(10);
+    let (stop_audio_tx, stop_audio_rx) = mpsc::channel::<()>();
+    let (audio_stopped_tx, audio_stopped_rx) = mpsc::channel::<()>();
+    let (start_audio_tx, start_audio_rx) = mpsc::channel::<()>();
+    // --- STT Preparation ---
+    let app_clone_for_stt = app.clone();
+    let log_tx_clone_prepare = log_tx.clone();
+    let stt_prepare_task = tokio::spawn(async move {
+        let config = { app_clone_for_stt.lock().unwrap().config.clone() };
+        (load_stt_processor(&config, &app_clone_for_stt, &log_tx_clone_prepare).await).ok()
+    });
 
-    // Setup logging
-    setup_logging(matches.get_flag("verbose"))?;
+    // --- Audio Recording Thread ---
+    let config_clone_for_audio = config.clone();
+    let app_clone_for_audio = app.clone();
+    let audio_stopped_tx_clone = audio_stopped_tx.clone();
+    std::thread::spawn(move || {
+        let mut audio_recorder: Option<AudioRecorder> = None;
+        let mut recording_active = false;
 
-    // Load configuration
-    let config = Config::load().context("Failed to load configuration")?;
-
-    if matches.get_flag("check-config") {
-        check_configuration(&config)?;
-        return Ok(());
-    }
-
-    if matches.get_flag("list-profiles") {
-        list_profiles(&config)?;
-        return Ok(());
-    }
-
-    if matches.get_flag("tune") {
-        tune_threshold(&config).await?;
-        return Ok(());
-    }
-
-    if matches.get_flag("tune-interactive") {
-        tune_threshold_interactive(&config).await?;
-        return Ok(());
-    }
-
-    // Run speech-to-text
-    let profile = matches.get_one::<String>("profile").map(|s| s.as_str());
-    let use_stdout = matches.get_flag("stdout");
-    run_stt(&config, profile, use_stdout).await
-}
-
-fn setup_logging(verbose: bool) -> Result<()> {
-    let log_level = if verbose { "debug" } else { "info" };
-
-    // Create log directory
-    let log_dir = dirs::home_dir()
-        .context("Could not determine home directory")?
-        .join(".local")
-        .join("share")
-        .join("simple-stt");
-
-    std::fs::create_dir_all(&log_dir).context("Failed to create log directory")?;
-
-    // File appender
-    let file_appender = RollingFileAppender::new(Rotation::DAILY, log_dir, "simple-stt.log");
-
-    // Console filter
-    let console_filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new(log_level))
-        .context("Failed to set log level")?;
-
-    // File filter (always info or higher)
-    let file_filter = EnvFilter::try_new("info").context("Failed to set file log level")?;
-
-    tracing_subscriber::registry()
-        .with(
-            fmt::layer()
-                .with_writer(std::io::stderr)
-                .with_filter(console_filter),
-        )
-        .with(
-            fmt::layer()
-                .with_writer(file_appender)
-                .with_ansi(false)
-                .with_filter(file_filter),
-        )
-        .init();
-
-    Ok(())
-}
-
-async fn tune_threshold(config: &Config) -> Result<()> {
-    info!("Starting silence threshold tuning");
-    println!("🎯 Tuning silence threshold for optimal detection...");
-
-    let mut audio_recorder =
-        AudioRecorder::new(config).context("Failed to initialize audio recorder")?;
-
-    let optimal_threshold = audio_recorder
-        .tune_silence_threshold(12)
-        .await
-        .context("Failed to tune silence threshold")?;
-
-    if let Some(threshold) = optimal_threshold {
-        let mut updated_config = config.clone();
-        updated_config
-            .update_silence_threshold(threshold)
-            .context("Failed to save updated configuration")?;
-
-        println!("✅ Updated config with new threshold: {threshold:.1}");
-        println!("You can now use the STT system with optimized settings!");
-        info!("Silence threshold tuning completed: {:.1}", threshold);
-    } else {
-        println!("❌ Tuning failed - could not determine optimal threshold");
-        warn!("Silence threshold tuning failed");
-    }
-
-    Ok(())
-}
-
-async fn tune_threshold_interactive(config: &Config) -> Result<()> {
-    use std::io::{self, Write};
-
-    println!("🎯 Interactive Threshold Tuning");
-    println!("===============================");
-    println!("This will help you find the perfect threshold through testing!");
-    println!();
-
-    // First, do the automatic tuning to get baseline suggestions
-    let mut audio_recorder =
-        AudioRecorder::new(config).context("Failed to initialize audio recorder")?;
-
-    println!("🔄 Step 1: Automatic calibration...");
-    let _optimal_threshold = audio_recorder
-        .tune_silence_threshold(12)
-        .await
-        .context("Failed to run initial tuning")?;
-
-    println!();
-    println!("🧪 Step 2: Interactive testing");
-    println!("We'll test different thresholds with quick 10-second recordings.");
-    println!("Type the threshold to test, or 'done' when you find one that works.");
-    println!();
-
-    let mut test_config = config.clone();
-    let mut successful_threshold: Option<f32> = None;
-
-    loop {
-        print!("🎯 Enter threshold to test (or 'done' to finish): ");
-        io::stdout().flush().unwrap();
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let input = input.trim();
-
-        if input == "done" {
-            break;
-        }
-
-        let threshold: f32 = match input.parse() {
-            Ok(t) => t,
-            Err(_) => {
-                println!("❌ Invalid number. Please enter a decimal number like 2.5");
-                continue;
+        loop {
+            // Check if application should exit
+            if !app_clone_for_audio.lock().unwrap().running {
+                if let Some(ref mut recorder) = audio_recorder {
+                    recorder.stop_recording();
+                }
+                tracing::info!("Audio thread: Application shutting down, exiting audio thread");
+                break;
             }
-        };
 
-        // Update test config with new threshold
-        test_config.audio.silence_threshold = threshold;
-        let mut test_recorder = AudioRecorder::new(&test_config)?;
+            // Check for start signal
+            if start_audio_rx.try_recv().is_ok() && !recording_active {
+                tracing::info!("Audio thread: Starting new recording session");
 
-        println!("🎤 Testing threshold {threshold:.1} - speak for ~5 seconds, then pause...");
-        println!("⏱️  Recording will start in 3 seconds...");
-
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-        // Quick test recording
-        match test_recorder.record_until_silence().await {
-            Ok(Some(audio_file)) => {
-                println!("✅ Recording completed! How did it feel?");
-                println!("   - Did it stop at the right time? (y/n)");
-                print!("   - Your feedback: ");
-                io::stdout().flush().unwrap();
-
-                let mut feedback = String::new();
-                io::stdin().read_line(&mut feedback)?;
-
-                if feedback.trim().to_lowercase().starts_with('y') {
-                    successful_threshold = Some(threshold);
-                    println!("🎉 Great! Threshold {threshold:.1} marked as working!");
-                } else {
-                    println!("👍 Noted. Try a different value:");
-                    println!(
-                        "   - If it cut you off → try a LOWER number (like {:.1})",
-                        threshold * 0.8
-                    );
-                    println!(
-                        "   - If it didn't stop → try a HIGHER number (like {:.1})",
-                        threshold * 1.2
-                    );
+                // Clear any leftover stop signals from previous recording
+                while stop_audio_rx.try_recv().is_ok() {
+                    // Silently clear leftover signals
                 }
 
-                // Clean up test file
-                let _ = std::fs::remove_file(audio_file);
-                println!();
+                // Create a fresh audio recorder for each session
+                match AudioRecorder::new(&config_clone_for_audio) {
+                    Ok(mut recorder) => {
+                        if let Err(e) = recorder.start_recording(audio_tx.clone()) {
+                            tracing::error!("Audio thread: Failed to start recording: {}", e);
+                        } else {
+                            tracing::info!("Audio thread: Successfully started recording");
+                            audio_recorder = Some(recorder);
+                            recording_active = true;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Audio thread: Failed to create recorder: {}", e);
+                    }
+                }
             }
-            Ok(None) => {
-                println!("❌ No audio recorded (silence detected immediately)");
-                println!("   - Try a LOWER threshold (like {:.1})", threshold * 0.7);
-                println!();
+
+            // Check for stop signal
+            if recording_active && stop_audio_rx.try_recv().is_ok() {
+                tracing::info!("Audio thread: Received stop signal, ending recording session");
+                if let Some(ref mut recorder) = audio_recorder {
+                    recorder.stop_recording();
+                }
+                // Drop the recorder completely for next session
+                audio_recorder = None;
+                recording_active = false;
+                audio_stopped_tx_clone.send(()).ok();
             }
-            Err(e) => {
-                println!("❌ Test recording failed: {e}");
-                println!("Try a different threshold.");
-                println!();
-            }
-        }
-    }
 
-    // Apply the successful threshold if found
-    if let Some(threshold) = successful_threshold {
-        let mut updated_config = config.clone();
-        updated_config
-            .update_silence_threshold(threshold)
-            .context("Failed to save updated configuration")?;
-
-        println!("🎯 Applied successful threshold: {threshold:.1}");
-        println!("✅ Configuration saved! Ready to use STT system.");
-    } else {
-        println!("💡 No threshold was marked as successful.");
-        println!("   You can manually edit ~/.config/simple-stt/config.yaml");
-        println!("   or run 'simple-stt --tune' for automatic suggestions.");
-    }
-
-    Ok(())
-}
-
-fn list_profiles(config: &Config) -> Result<()> {
-    println!("📝 Available LLM profiles:");
-
-    for (profile_id, profile_data) in &config.llm.profiles {
-        println!("  • {}: {}", profile_id, profile_data.name);
-    }
-
-    println!("\n🎯 Default profile: {}", config.llm.default_profile);
-
-    Ok(())
-}
-
-async fn run_stt(config: &Config, profile: Option<&str>, use_stdout: bool) -> Result<()> {
-    info!("Starting STT process with profile: {:?}", profile);
-
-    // Initialize managers
-    let mut ui_manager = UiManager::new(config);
-    let mut audio_recorder = AudioRecorder::new(config)?;
-    let mut stt_processor = SttProcessor::new(config)?;
-    let llm_refiner = LlmRefiner::new(config)?;
-    let mut clipboard_manager = ClipboardManager::new(config)?;
-
-    // Check LLM configuration
-    let llm_configured = llm_refiner.is_configured();
-
-    if !llm_configured {
-        println!("⚠️  LLM not configured - will skip text refinement");
-        warn!("LLM not configured, will skip text refinement");
-    }
-
-    // Start UI
-    ui_manager.start()?;
-    ui_manager.start_recording(profile);
-
-    // Start STT preparation in parallel with recording
-    let preparation_task = tokio::spawn(async move {
-        match stt_processor.prepare().await {
-            Ok(()) => Ok(stt_processor),
-            Err(e) => Err(e),
+            std::thread::sleep(Duration::from_millis(100));
         }
     });
 
-    // Record audio
-    let audio_file = audio_recorder
-        .record_until_silence()
-        .await
-        .context("Failed to record audio")?;
-
-    ui_manager.stop_recording();
-
-    // Wait for STT preparation to complete
-    ui_manager.set_status("⏳ Preparing transcription...", "#ffaa00");
-    let stt_processor = match preparation_task.await {
-        Ok(Ok(processor)) => processor,
-        Ok(Err(e)) => {
-            warn!("STT preparation failed: {}", e);
-            println!("❌ STT preparation failed: {e}");
-            println!("🎤 Audio was recorded successfully but transcription is unavailable");
-            ui_manager.set_error("STT preparation failed");
-            return Ok(());
-        }
-        Err(e) => {
-            warn!("STT preparation task failed: {}", e);
-            println!("❌ STT preparation task failed: {e}");
-            ui_manager.set_error("STT preparation task failed");
-            return Ok(());
-        }
-    };
-
-    let audio_file = match audio_file {
-        Some(file) => file,
+    let stt_processor_arc = match stt_prepare_task.await? {
+        Some(processor) => processor,
         None => {
-            ui_manager.set_warning("No audio recorded");
-            return Ok(());
+            tracing::error!("Failed to initialize STT processor");
+            return Err(anyhow::anyhow!("STT processor initialization failed"));
         }
     };
+    let mut recorded_audio: Vec<f32> = Vec::new();
 
-    // Check if STT processor is now configured after preparation
-    if !stt_processor.is_configured() {
-        println!("🎤 Audio recorded successfully!");
-        println!("📁 Audio file saved to: {audio_file:?}");
-        if let Some(error) = stt_processor.preparation_failed() {
-            println!("❌ STT preparation failed: {error}");
-        } else {
-            println!("💡 STT backend not configured properly");
+    loop {
+        let app_arc = app.clone(); // Store reference to Arc before locking
+        let mut app = app.lock().unwrap();
+        if !app.running {
+            break;
         }
-        ui_manager.set_status("✅ Audio recorded (transcription unavailable)", "#ffaa00");
 
-        // Clean up and exit
-        std::fs::remove_file(&audio_file).ok();
-        return Ok(());
-    }
+        terminal.draw(|frame| draw(frame, &app))?;
+        handle_key_events(&mut app, stop_audio_tx.clone(), start_audio_tx.clone())?;
 
-    // Transcribe audio
-    ui_manager.set_transcribing();
-    let text = match stt_processor.transcribe(&audio_file).await {
-        Ok(Some(text)) => text,
-        Ok(None) => {
-            ui_manager.set_warning("No speech detected in audio");
-            return Ok(());
+        // Process incoming log messages
+        while let Ok(log_message) = log_rx.try_recv() {
+            app.add_log_message(log_message);
         }
-        Err(e) => {
-            warn!("Transcription failed: {}", e);
-            println!("❌ Transcription failed: {e}");
-            println!("🎤 Audio was recorded successfully but couldn't be transcribed");
-            ui_manager.set_error("Transcription failed");
-            return Ok(());
-        }
-    };
 
-    info!("Transcribed text: \"{}\"", text);
+        // Handle model selection confirmation
+        if app.model_change_requested {
+            app.model_change_requested = false;
+            let selected_model = app.get_selected_model().to_string();
+            if selected_model != app.get_current_model() {
+                // Update config and reload model
+                app.config.whisper.model = selected_model.clone();
+                app.model_status = format!("Loading {selected_model}...");
+                app.state = AppState::LoadingModel;
 
-    // Refine text with LLM (optional)
-    let final_text = if llm_configured {
-        ui_manager.set_refining(profile);
+                // Save config
+                if let Err(e) = app.config.save() {
+                    tracing::error!("Failed to save config: {}", e);
+                }
 
-        match llm_refiner.refine_text(&text, profile).await {
-            Ok(Some(refined)) => {
-                info!("Text refined successfully");
-                refined
-            }
-            Ok(None) => {
-                warn!("LLM returned empty response, using original text");
-                text
-            }
-            Err(e) => {
-                warn!("LLM refinement failed: {}, using original text", e);
-                println!("⚠️  Text refinement failed, using original transcription");
-                text
-            }
-        }
-    } else {
-        info!("LLM not configured, using original transcription");
-        text
-    };
+                tracing::info!("Model changed to: {}, reloading...", selected_model);
 
-    info!("Final text: \"{}\"", final_text);
+                // Reload the STT processor with new model
+                let app_clone_for_reload = app_arc.clone();
+                let log_tx_clone_reload = log_tx.clone();
+                let config_for_reload = app.config.clone();
+                let stt_processor_clone = stt_processor_arc.clone();
 
-    // Handle output - stdout or clipboard/paste
-    if use_stdout {
-        // Output to stdout
-        println!("{final_text}");
-        info!("STT process completed successfully - output to stdout");
-    } else {
-        // Handle clipboard/paste
-        match if config.clipboard.auto_paste {
-            clipboard_manager.paste_text(&final_text).await
-        } else {
-            clipboard_manager.copy_to_clipboard(&final_text).map(|_| ())
-        } {
-            Ok(_) => {
-                ui_manager.set_completed(!config.clipboard.auto_paste);
-                println!("✅ Processing complete!");
-                info!("STT process completed successfully");
-            }
-            Err(e) => {
-                warn!("Clipboard operation failed: {}", e);
-                println!("⚠️  Transcription successful but clipboard operation failed:");
-                println!("📝 Transcribed text: \"{final_text}\"");
-                ui_manager.set_status("⚠️ Transcription done, clipboard failed", "#ffaa00");
-            }
-        }
-    }
-
-    // Auto-hide delay
-    if ui_manager.is_enabled() && config.ui.auto_hide_delay > 0.0 {
-        sleep(Duration::from_secs_f64(config.ui.auto_hide_delay)).await;
-    }
-
-    Ok(())
-}
-
-fn check_configuration(config: &Config) -> Result<()> {
-    println!("🔧 Configuration Status");
-    println!("=======================");
-
-    // Check STT configuration
-    let stt_configured = match config.whisper.backend.as_str() {
-        "api" => config.whisper.api_key.is_some(),
-        "local" => {
-            // For local backend, check if model exists or can be auto-downloaded
-            match get_model_path(&config.whisper) {
-                Ok(model_path) => model_path.exists() || config.whisper.download_models,
-                Err(_) => false,
-            }
-        }
-        _ => false,
-    };
-
-    if stt_configured {
-        println!("✅ Speech-to-Text: Configured");
-        println!(
-            "   Backend: {} ({})",
-            config.whisper.backend,
-            match config.whisper.backend.as_str() {
-                "api" => "OpenAI Whisper API",
-                "local" => "Local Whisper models",
-                _ => "Unknown",
-            }
-        );
-        println!("   Model: {}", config.whisper.model);
-        if let Some(lang) = &config.whisper.language {
-            println!("   Language: {lang}");
-        }
-        if config.whisper.backend == "local" {
-            println!("   Device: {}", config.whisper.device);
-            if let Some(path) = &config.whisper.model_path {
-                println!("   Model Path: {path}");
-            } else {
-                match get_model_path(&config.whisper) {
-                    Ok(default_path) => {
-                        println!("   Model Path: {default_path:?} (default)");
-                        if default_path.exists() {
-                            println!("   Model Status: ✅ Available");
-                        } else if config.whisper.download_models {
-                            println!("   Model Status: ⚠️ Will be downloaded on first use");
-                            println!("   Download URL: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{}.bin", config.whisper.model);
-                        } else {
-                            println!("   Model Status: ❌ Not found");
+                tokio::spawn(async move {
+                    match load_stt_processor(
+                        &config_for_reload,
+                        &app_clone_for_reload,
+                        &log_tx_clone_reload,
+                    )
+                    .await
+                    {
+                        Ok(new_processor) => {
+                            // Replace the old processor with the new one
+                            let new_processor_inner = Arc::try_unwrap(new_processor)
+                                .map_err(|_| "Failed to unwrap Arc")
+                                .unwrap()
+                                .into_inner();
+                            let mut old_processor = stt_processor_clone.lock().await;
+                            *old_processor = new_processor_inner;
+                            tracing::info!(
+                                "✅ Model {} loaded successfully",
+                                config_for_reload.whisper.model
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to reload model {}: {}",
+                                config_for_reload.whisper.model,
+                                e
+                            );
+                            let mut app = app_clone_for_reload.lock().unwrap();
+                            app.model_status =
+                                format!("❌ Failed to load {}", config_for_reload.whisper.model);
+                            app.state = AppState::Idle;
                         }
                     }
-                    Err(_) => println!("   Model Path: ❌ Invalid"),
-                }
+                });
+            } else {
+                app.exit_model_selection();
             }
         }
-    } else {
-        println!("❌ Speech-to-Text: Not configured");
-        match config.whisper.backend.as_str() {
-            "api" => println!("   💡 Set OPENAI_API_KEY environment variable to enable"),
-            "local" => {
-                println!("   📥 Local model not found");
-                if config.whisper.download_models {
-                    println!("   💡 Will be auto-downloaded on first use");
+
+        if app.state == AppState::Recording {
+            if let Ok(data) = audio_rx.try_recv() {
+                app.audio_level = data.level;
+
+                // Update waveform for visualization (keep recent samples for display)
+                const WAVEFORM_SAMPLES: usize = 100;
+
+                // Take a subset of samples for waveform display (downsample if needed)
+                let step = if data.samples.len() > WAVEFORM_SAMPLES {
+                    data.samples.len() / WAVEFORM_SAMPLES
                 } else {
-                    println!("   💡 Download model manually or enable auto-download");
+                    1
+                };
+
+                let new_waveform_data: Vec<f32> = data
+                    .samples
+                    .iter()
+                    .step_by(step)
+                    .take(WAVEFORM_SAMPLES)
+                    .cloned()
+                    .collect();
+
+                // Add new data and maintain sliding window
+                app.audio_waveform.extend(new_waveform_data);
+                if app.audio_waveform.len() > WAVEFORM_SAMPLES {
+                    let excess = app.audio_waveform.len() - WAVEFORM_SAMPLES;
+                    app.audio_waveform.drain(0..excess);
                 }
-                if let Ok(model_path) = get_model_path(&config.whisper) {
-                    println!("   📁 Expected location: {model_path:?}");
-                    println!("   🌐 Download from: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{}.bin", config.whisper.model);
+
+                // Debug: Log waveform data occasionally
+                static mut DEBUG_COUNTER: usize = 0;
+                unsafe {
+                    DEBUG_COUNTER += 1;
+                    if DEBUG_COUNTER % 50 == 0 {
+                        tracing::debug!(
+                            "Waveform: {} samples, range: {:.3} to {:.3}",
+                            app.audio_waveform.len(),
+                            app.audio_waveform
+                                .iter()
+                                .min_by(|a, b| a.partial_cmp(b).unwrap())
+                                .unwrap_or(&0.0),
+                            app.audio_waveform
+                                .iter()
+                                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                                .unwrap_or(&0.0)
+                        );
+                    }
                 }
+
+                // Now extend recorded_audio (this consumes data.samples)
+                recorded_audio.extend(data.samples);
             }
-            _ => println!("   ❌ Unknown backend: {}", config.whisper.backend),
         }
-    }
 
-    // Check LLM configuration
-    let llm_configured = config.llm.api_key.is_some();
-    if llm_configured {
-        println!("✅ LLM Text Refinement: Configured");
-        println!("   Provider: {}", config.llm.provider);
-        println!("   Model: {}", config.llm.model);
-        println!("   Default Profile: {}", config.llm.default_profile);
-        println!("   Available Profiles: {}", config.llm.profiles.len());
-    } else {
-        println!("❌ LLM Text Refinement: Not configured");
-        match config.llm.provider.as_str() {
-            "openai" => println!("   💡 Set OPENAI_API_KEY environment variable to enable"),
-            "anthropic" => println!("   💡 Set ANTHROPIC_API_KEY environment variable to enable"),
-            _ => println!(
-                "   💡 Configure API key for {} provider",
-                config.llm.provider
-            ),
+        if app.state == AppState::Transcribing {
+            if !app.transcription_initiated {
+                app.transcription_initiated = true;
+                stop_audio_tx.send(()).ok(); // Signal audio thread to stop
+            }
+
+            // Check if audio thread has confirmed stop (non-blocking)
+            if audio_stopped_rx.try_recv().is_ok() {
+                // Drain any remaining audio data from the channel
+                while let Ok(data) = audio_rx.try_recv() {
+                    recorded_audio.extend(data.samples);
+                }
+
+                let audio_to_process = std::mem::take(&mut recorded_audio);
+                let config = app.config.clone();
+                let stt_tx_clone = stt_tx.clone();
+                let processor_clone = stt_processor_arc.clone();
+                let log_tx_clone_transcribe = log_tx.clone();
+
+                let audio_duration_sec =
+                    audio_to_process.len() as f32 / config.audio.sample_rate as f32;
+                tracing::debug!(
+                    "Processing audio: {} samples, duration: {:.2} seconds",
+                    audio_to_process.len(),
+                    audio_duration_sec
+                );
+
+                // Save the audio file in the main thread to avoid race conditions
+                let audio_file = wav_utils::save_wav(
+                    &audio_to_process,
+                    config.audio.sample_rate,
+                    config.audio.channels,
+                )?;
+
+                tokio::spawn(async move {
+                    let processor = processor_clone.lock().await;
+                    let result = match processor
+                        .transcribe(audio_file.path(), Some(log_tx_clone_transcribe.clone()))
+                        .await
+                    {
+                        Ok(Some(text)) => text,
+                        Ok(None) => {
+                            log_tx_clone_transcribe
+                                .send("Transcription: No speech detected.".to_string())
+                                .await
+                                .ok();
+                            "No speech detected.".to_string()
+                        }
+                        Err(e) => {
+                            let error_msg = format!("Transcription error: {e}");
+                            log_tx_clone_transcribe.send(error_msg.clone()).await.ok();
+                            error_msg
+                        }
+                    };
+                    stt_tx_clone.send(result).await.ok();
+                    drop(audio_file); // Ensure the temporary file is dropped after transcription
+                });
+            }
         }
-    }
 
-    // Check audio configuration
-    println!("✅ Audio Recording: Always available");
-    println!("   Sample Rate: {} Hz", config.audio.sample_rate);
-    println!(
-        "   Silence Threshold: {:.1}",
-        config.audio.silence_threshold
-    );
-    println!("   Silence Duration: {:.1}s", config.audio.silence_duration);
-
-    // Check clipboard configuration
-    println!("✅ Clipboard: Always available");
-    if config.clipboard.auto_paste {
-        println!("   Auto-paste: Enabled");
-        let paste_tools = ClipboardManager::check_paste_tools();
-        if paste_tools.is_empty() {
-            println!("   ⚠️  No paste tools found (install wtype or ydotool for Wayland)");
-        } else {
-            println!("   Paste tools: {}", paste_tools.join(", "));
+        if let Ok(text) = stt_rx.try_recv() {
+            if text != "No speech detected." {
+                clipboard_manager.copy_to_clipboard(&text)?;
+            }
+            app.finish_processing(text);
+            app.reset(); // Reset state for new transcription
+            recorded_audio.clear();
         }
-    } else {
-        println!("   Auto-paste: Disabled (will copy to clipboard)");
+
+        app.tick();
+        drop(app); // Release lock
+        std::thread::sleep(Duration::from_millis(10));
     }
 
-    let (clipboard_tools, _) = ClipboardManager::check_tools();
-    if clipboard_tools.is_empty() {
-        println!("   ⚠️  No clipboard tools found (install wl-copy/wl-paste for Wayland)");
-    } else {
-        println!("   Clipboard tools: {}", clipboard_tools.join(", "));
-    }
-
-    println!();
-    println!("📖 Usage modes:");
-    if stt_configured && llm_configured {
-        println!("   🚀 Full mode: Record → Transcribe → Refine → Clipboard/Stdout");
-    } else if stt_configured {
-        println!("   📝 Transcription mode: Record → Transcribe → Clipboard/Stdout");
-    } else {
-        println!("   🎤 Audio-only mode: Record → Save audio file");
-    }
-
-    println!("   📺 Output options: --stdout (stdout) or default (clipboard)");
-
-    println!("\n📁 Config file: {:?}", Config::config_path()?);
-    println!("🌊 This application is designed for Wayland compositors (like Hyprland)");
-
+    restore_terminal(&mut terminal)?;
     Ok(())
 }
 
-/// Get the path where the model should be located (duplicate from local.rs for checking)
-fn get_model_path(config: &simple_stt_rs::config::WhisperConfig) -> Result<std::path::PathBuf> {
-    use std::path::PathBuf;
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
+    let mut stdout = io::stdout();
+    enable_raw_mode()?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
+}
 
-    if let Some(ref path) = config.model_path {
-        let expanded = shellexpand::tilde(path);
-        Ok(PathBuf::from(expanded.as_ref()))
-    } else {
-        // Default model path in cache directory
-        let cache_dir = dirs::cache_dir()
-            .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
-            .unwrap_or_else(std::env::temp_dir);
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+    Ok(())
+}
 
-        let model_dir = cache_dir.join("simple-stt").join("models");
-        let model_file = format!("ggml-{}.bin", config.model);
+use tracing_appender::rolling;
 
-        Ok(model_dir.join(model_file))
-    }
+fn setup_logging() -> Result<()> {
+    let cache_dir = cache_dir().context("Could not determine XDG cache directory")?;
+    let log_dir = cache_dir.join("simple-stt");
+    std::fs::create_dir_all(&log_dir)
+        .with_context(|| format!("Failed to create log directory: {log_dir:?}"))?;
+    let log_file = rolling::daily(log_dir, "simple-stt.log");
+    let log_level = "debug"; // Changed to debug for more verbose logging
+    let log_filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new(log_level))
+        .unwrap();
+
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_writer(log_file).with_filter(log_filter))
+        .init();
+
+    Ok(())
 }

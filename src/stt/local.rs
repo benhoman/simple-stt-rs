@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
 use hf_hub::api::tokio::Api;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use tempfile;
+use tokio::sync::mpsc::Sender as TokioSender; // Import TokioSender
 use tracing::{debug, info, warn};
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters}; // Import Read trait for reading from gag
 
 use crate::config::{Config, WhisperConfig};
 
@@ -70,10 +73,20 @@ impl LocalSttBackend {
 
         info!("Loading Whisper model from: {:?}", model_path);
 
+        // Suppress stderr from the C++ library during model loading
+        let temp_file = tempfile::tempfile()?;
+        let stderr_gag = gag::Redirect::stderr(temp_file)?;
+
         // Load the model (this can be slow, so we do it during preparation)
         let ctx_params = WhisperContextParameters::default();
 
-        match WhisperContext::new_with_params(model_path.to_string_lossy().as_ref(), ctx_params) {
+        let result =
+            WhisperContext::new_with_params(model_path.to_string_lossy().as_ref(), ctx_params);
+
+        // Restore stderr
+        drop(stderr_gag);
+
+        match result {
             Ok(context) => {
                 info!("✅ Whisper model loaded successfully");
                 self.context = Some(context);
@@ -113,7 +126,11 @@ impl LocalSttBackend {
         &self.config.model
     }
 
-    pub async fn transcribe<P: AsRef<Path>>(&self, audio_path: P) -> Result<Option<String>> {
+    pub async fn transcribe<P: AsRef<Path>>(
+        &self,
+        audio_path: P,
+        log_tx: Option<TokioSender<String>>,
+    ) -> Result<Option<String>> {
         let audio_path = audio_path.as_ref();
 
         if !audio_path.exists() {
@@ -160,6 +177,10 @@ impl LocalSttBackend {
 
         debug!("Running Whisper transcription...");
 
+        // Suppress stderr from the C++ library during transcription and capture it
+        let temp_file = tempfile::tempfile()?;
+        let stderr_gag = gag::Redirect::stderr(temp_file)?;
+
         // Run transcription using the prepared context
         let mut state = context
             .create_state()
@@ -167,6 +188,20 @@ impl LocalSttBackend {
         state
             .full(params, &audio_data)
             .context("Failed to run Whisper transcription")?;
+
+        // Read captured stderr and send it as a log message
+        let mut captured_stderr = String::new();
+        stderr_gag
+            .into_inner()
+            .read_to_string(&mut captured_stderr)?;
+
+        if let Some(tx) = log_tx {
+            if !captured_stderr.trim().is_empty() {
+                tx.send(format!("Whisper stderr: {}", captured_stderr.trim()))
+                    .await
+                    .ok();
+            }
+        }
 
         // Extract text using the state
         let num_segments = state
@@ -314,6 +349,18 @@ async fn load_audio_file<P: AsRef<Path>>(audio_path: P) -> Result<Vec<f32>> {
     let mut samples = samples.context("Failed to read audio samples")?;
 
     debug!("Read {} samples", samples.len());
+
+    // Calculate min/max and RMS for debugging
+    if !samples.is_empty() {
+        let min_val = samples.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_val = samples.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let sum_squares: f32 = samples.iter().map(|&s| s * s).sum();
+        let rms = (sum_squares / samples.len() as f32).sqrt();
+        debug!(
+            "Raw f32 samples - Min: {:.4}, Max: {:.4}, RMS: {:.4}",
+            min_val, max_val, rms
+        );
+    }
 
     // Convert stereo to mono if necessary
     if spec.channels == 2 {
